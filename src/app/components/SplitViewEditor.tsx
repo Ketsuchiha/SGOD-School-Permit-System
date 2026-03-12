@@ -1,0 +1,536 @@
+import { School, SchoolStatus, SHSStrand, OCRPermitResult, GovernmentPermit } from '../data/mockData';
+import { X, Save, Upload, MapPin, Building2, FileText, AlertCircle, Trash2 } from 'lucide-react';
+import { useEffect, useState, useRef } from 'react';
+import React from 'react';
+import { PDFViewer } from './PDFViewer';
+
+interface SplitViewEditorProps {
+  school: School | null;
+  onClose: () => void;
+  onSave: (school: School) => void;
+  onDelete: (id: string) => void;
+  isNewSchool?: boolean;
+}
+
+export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool = false }: SplitViewEditorProps) {
+  const apiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
+  const fallbackLogo = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2NgYGBgAAAABQABDQottAAAAABJRU5ErkJggg==';
+  const [logoSrc, setLogoSrc] = useState<string>(import.meta.env?.VITE_DEPED_LOGO_URL ?? '/Deped_Logo.png');
+  const [editedSchool, setEditedSchool] = useState<School>(
+    school || {
+      id: Date.now().toString(),
+      name: '',
+      permitNumber: '',
+      status: 'operational',
+      logicType: 'manual',
+      schoolType: 'regular',
+      district: '',
+      barangay: '',
+      address: '',
+      issueDate: new Date().toISOString().split('T')[0],
+      schoolYear: '2024-2025',
+      permitLevels: {
+        kindergarten: false,
+        elementary: false,
+        highSchool: false,
+        seniorHighSchool: false,
+      },
+      shsStrands: [],
+      lat: 14.2722,
+      lng: 121.1239,
+    }
+  );
+
+  const [manualOverride, setManualOverride] = useState(editedSchool.logicType === 'manual');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const toggleStrand = (strand: SHSStrand) => {
+    const currentStrands = editedSchool.shsStrands || [];
+    const hasStrand = currentStrands.includes(strand);
+    
+    setEditedSchool({
+      ...editedSchool,
+      shsStrands: hasStrand 
+        ? currentStrands.filter((s: SHSStrand) => s !== strand)
+        : [...currentStrands, strand]
+    });
+  };
+
+  const handleSave = () => {
+    onSave({
+      ...editedSchool,
+      logicType: manualOverride ? 'manual' : 'ocr',
+    });
+    onClose();
+  };
+
+  const requestOcr = async (file: File): Promise<OCRPermitResult> => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${apiBaseUrl}/api/ocr/permit`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error('OCR request failed');
+    }
+
+    return response.json();
+  };
+
+  const requestGeocode = async (name: string, address: string) => {
+    const response = await fetch(`${apiBaseUrl}/api/geocode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, address }),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return response.json() as Promise<{ lat: number; lng: number }>;
+  };
+
+  const handleGeocode = async () => {
+    if (!editedSchool.address.trim()) return;
+    const result = await requestGeocode(editedSchool.name.trim(), editedSchool.address.trim());
+    if (!result) return;
+    setEditedSchool((prev: School) => ({ ...prev, lat: result.lat, lng: result.lng }));
+  };
+
+  const handleDelete = () => {
+    if (school && confirm('Are you sure you want to move this record to the trash?')) {
+      onDelete(school.id);
+      onClose();
+    }
+  };
+
+  const storedFileRef = useRef<File | null>(null);
+
+  const handleUploadPermit = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    storedFileRef.current = file;
+    if (editedSchool.permitUrl) {
+      URL.revokeObjectURL(editedSchool.permitUrl);
+    }
+
+    setIsProcessing(true);
+    setUploadError(null);
+
+    try {
+      const ocrResult = await requestOcr(file);
+      const permitUrl = URL.createObjectURL(file);
+
+      const newPermit: GovernmentPermit = {
+        permitNumber: ocrResult.permitNumber ?? '',
+        schoolYear: ocrResult.schoolYear ?? '',
+        issueDate: new Date().toISOString().split('T')[0],
+        permitLevels: ocrResult.permitLevels ?? { kindergarten: false, elementary: false, highSchool: false, seniorHighSchool: false },
+        shsStrands: ocrResult.shsStrands ?? [],
+      };
+
+      setEditedSchool((prev: School) => {
+        const existing = prev.governmentPermits ?? [];
+        const deduped = newPermit.permitNumber
+          ? [newPermit, ...existing.filter((p) => p.permitNumber !== newPermit.permitNumber)]
+          : [newPermit, ...existing];
+        return {
+          ...prev,
+          name: ocrResult.name ?? prev.name,
+          address: ocrResult.address ?? prev.address,
+          permitNumber: newPermit.permitNumber || prev.permitNumber,
+          schoolYear: newPermit.schoolYear || prev.schoolYear,
+          permitLevels: newPermit.permitLevels,
+          shsStrands: newPermit.shsStrands ?? prev.shsStrands,
+          logicType: 'ocr',
+          permitUrl,
+          governmentPermits: deduped,
+        };
+      });
+
+      setIsProcessing(false);
+    } catch (error) {
+      setIsProcessing(false);
+      setUploadError('OCR failed. Please try a clearer scan.');
+    }
+  };
+
+  useEffect(() => {
+    if (!editedSchool.address.trim()) return;
+    const timeout = setTimeout(() => {
+      requestGeocode(editedSchool.name.trim(), editedSchool.address.trim()).then((result) => {
+        if (!result) return;
+        setEditedSchool((prev: School) => ({ ...prev, lat: result.lat, lng: result.lng }));
+      });
+    }, 700);
+
+    return () => clearTimeout(timeout);
+  }, [editedSchool.address, editedSchool.name]);
+
+  return (
+    <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="w-full h-full max-w-[95vw] max-h-[95vh] bg-slate-900/95 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl flex flex-col">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-[#0C4DA2] to-blue-600 px-6 py-4 flex items-center justify-between rounded-t-2xl">
+          <div className="flex items-center gap-3">
+            <img 
+              src={logoSrc}
+              alt="DepEd Cabuyao" 
+              onError={() => setLogoSrc(fallbackLogo)}
+              className="w-10 h-10"
+            />
+            <div>
+              <h2 className="text-xl font-bold text-white">
+                {isNewSchool ? 'New School Registration' : 'Permit Verification & Edit'}
+              </h2>
+              <p className="text-sm text-blue-100">
+                {isNewSchool ? 'Register a new school' : editedSchool.permitNumber}
+              </p>
+            </div>
+          </div>
+          <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+            >
+              <X className="w-5 h-5 text-white" />
+            </button>
+        </div>
+
+        {/* Split View Content */}
+        <div className="flex-1 flex overflow-hidden">
+          {/* Left: PDF Viewer (50%) */}
+          <div className="w-1/2 p-6 overflow-hidden">
+            <PDFViewer 
+              permitUrl={editedSchool.permitUrl} 
+              permitNumber={editedSchool.permitNumber || 'New Permit'}
+            />
+          </div>
+
+          {/* Right: Editable Form (50%) */}
+          <div className="w-1/2 p-6 overflow-y-auto">
+            <div className="space-y-6">
+              {/* School Information */}
+              <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl p-6">
+                <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+                  <Building2 className="w-5 h-5" />
+                  School Information
+                </h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs text-slate-400 mb-2 block">School Name *</label>
+                    <input
+                      type="text"
+                      value={editedSchool.name}
+                      onChange={(e) => setEditedSchool({ ...editedSchool, name: e.target.value })}
+                      placeholder="Enter school name"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-slate-400 mb-2 block">Complete Address *</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={editedSchool.address}
+                        onChange={(e) => setEditedSchool({ ...editedSchool, address: e.target.value })}
+                        placeholder="Enter complete address"
+                        className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
+                      />
+                      <button
+                          type="button"
+                          onClick={handleGeocode}
+                          className="px-4 py-3 bg-[#0C4DA2]/20 hover:bg-[#0C4DA2]/30 border border-[#0C4DA2]/40 text-blue-300 rounded-lg transition-colors flex items-center gap-2 whitespace-nowrap"
+                        >
+                        <MapPin className="w-4 h-4" />
+                        Geocode
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Permit Details */}
+              <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl p-6">
+                <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+                  <FileText className="w-5 h-5" />
+                  Permit Details
+                </h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs text-slate-400 mb-2 block">Permit Number *</label>
+                    <input
+                      type="text"
+                      value={editedSchool.permitNumber}
+                      onChange={(e) => setEditedSchool({ ...editedSchool, permitNumber: e.target.value })}
+                      placeholder="SDO-CAB-YYYY-XXX"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-slate-500 font-mono focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-slate-400 mb-2 block">School Year *</label>
+                    <input
+                      type="text"
+                      value={editedSchool.schoolYear}
+                      onChange={(e) => setEditedSchool({ ...editedSchool, schoolYear: e.target.value })}
+                      placeholder="2024-2025"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
+                    />
+                  </div>
+
+                  {/* Government Permit Levels */}
+                  <div>
+                    <label className="text-xs text-slate-400 mb-3 block">Government Permit (Check applicable levels) *</label>
+                    <div className="space-y-3">
+                      <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={editedSchool.permitLevels.kindergarten}
+                          aria-label="Kindergarten Permit"
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditedSchool({
+                            ...editedSchool,
+                            permitLevels: { ...editedSchool.permitLevels, kindergarten: e.target.checked }
+                          })}
+                          className="w-5 h-5 rounded border-white/20 text-[#0C4DA2] focus:ring-2 focus:ring-[#0C4DA2] bg-white/5"
+                        />
+                        <div className="flex-1">
+                          <div className="text-white font-medium">K - Kindergarten</div>
+                          <div className="text-xs text-slate-400">Pre-elementary education</div>
+                        </div>
+                      </label>
+                      
+                      <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={editedSchool.permitLevels.elementary}
+                          aria-label="Elementary Permit"
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditedSchool({
+                            ...editedSchool,
+                            permitLevels: { ...editedSchool.permitLevels, elementary: e.target.checked }
+                          })}
+                          className="w-5 h-5 rounded border-white/20 text-[#0C4DA2] focus:ring-2 focus:ring-[#0C4DA2] bg-white/5"
+                        />
+                        <div className="flex-1">
+                          <div className="text-white font-medium">E - Elementary</div>
+                          <div className="text-xs text-slate-400">Grades 1-6</div>
+                        </div>
+                      </label>
+                      
+                      <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={editedSchool.permitLevels.highSchool}
+                          aria-label="High School Permit"
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditedSchool({
+                            ...editedSchool,
+                            permitLevels: { ...editedSchool.permitLevels, highSchool: e.target.checked }
+                          })}
+                          className="w-5 h-5 rounded border-white/20 text-[#0C4DA2] focus:ring-2 focus:ring-[#0C4DA2] bg-white/5"
+                        />
+                        <div className="flex-1">
+                          <div className="text-white font-medium">J - High School (Junior)</div>
+                          <div className="text-xs text-slate-400">Grades 7-10</div>
+                        </div>
+                      </label>
+                      
+                      <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition-colors">
+                        <input
+                          type="checkbox"
+                          checked={editedSchool.permitLevels.seniorHighSchool}
+                          aria-label="Senior High School Permit"
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditedSchool({
+                            ...editedSchool,
+                            permitLevels: { ...editedSchool.permitLevels, seniorHighSchool: e.target.checked }
+                          })}
+                          className="w-5 h-5 rounded border-white/20 text-[#0C4DA2] focus:ring-2 focus:ring-[#0C4DA2] bg-white/5"
+                        />
+                        <div className="flex-1">
+                          <div className="text-white font-medium">SHS - Senior High School</div>
+                          <div className="text-xs text-slate-400">Grades 11-12</div>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* SHS Strands */}
+                  {editedSchool.permitLevels.seniorHighSchool && (
+                    <div>
+                      <label className="text-xs text-slate-400 mb-3 block">Senior High School Strands *</label>
+                      <div className="grid grid-cols-2 gap-3">
+                        {[
+                          { value: 'STEM', label: 'STEM', desc: 'Science, Technology, Engineering & Mathematics' },
+                          { value: 'ABM', label: 'ABM', desc: 'Accountancy, Business & Management' },
+                          { value: 'HUMSS', label: 'HUMSS', desc: 'Humanities & Social Sciences' },
+                          { value: 'GAS', label: 'GAS', desc: 'General Academic Strand' },
+                          { value: 'TVL-ICT', label: 'TVL-ICT', desc: 'ICT Track' },
+                          { value: 'TVL-HE', label: 'TVL-HE', desc: 'Home Economics' },
+                          { value: 'TVL-IA', label: 'TVL-IA', desc: 'Industrial Arts' },
+                          { value: 'ARTS-DESIGN', label: 'Arts & Design', desc: 'Arts & Design Track' },
+                          { value: 'SPORTS', label: 'Sports', desc: 'Sports Track' },
+                        ].map((strand) => (
+                          <label 
+                            key={strand.value}
+                            className={`
+                              flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all
+                              ${(editedSchool.shsStrands || []).includes(strand.value as SHSStrand)
+                                ? 'bg-[#0C4DA2]/20 border-[#0C4DA2]/60 text-white'
+                                : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
+                              }
+                            `}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={(editedSchool.shsStrands || []).includes(strand.value as SHSStrand)}
+                              aria-label={strand.label}
+                              onChange={() => toggleStrand(strand.value as SHSStrand)}
+                              className="w-4 h-4 rounded border-white/20 text-[#0C4DA2] focus:ring-2 focus:ring-[#0C4DA2] bg-white/5"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-medium">{strand.label}</div>
+                              <div className="text-xs opacity-70 truncate">{strand.desc}</div>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Status Management */}
+              <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl p-6">
+                <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5" />
+                  Permit Status Management
+                </h3>
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs text-slate-400 mb-2 block">Current Status *</label>
+                    <select
+                      value={editedSchool.status}
+                      aria-label="Current Status"
+                      onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setEditedSchool({ ...editedSchool, status: e.target.value as SchoolStatus })}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
+                    >
+                      <option value="operational">Operational</option>
+                      <option value="renewal">For Renewal</option>
+                      <option value="not-operational">Not Operational</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 bg-white/5 rounded-lg border border-white/10">
+                    <div>
+                      <div className="text-white text-sm font-medium">Manual Override</div>
+                      <div className="text-xs text-slate-400 mt-1">
+                        {manualOverride 
+                          ? 'Status set manually by administrator' 
+                          : 'Status detected automatically via OCR'}
+                      </div>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={manualOverride}
+                        aria-label="Manual Override Status"
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setManualOverride(e.target.checked)}
+                        className="sr-only peer"
+                      />
+                      <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0C4DA2]"></div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* Permit History */}
+              {editedSchool.governmentPermits && editedSchool.governmentPermits.length > 0 && (
+                <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl p-4">
+                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2 text-sm">
+                    <FileText className="w-4 h-4" />
+                    Permit History ({editedSchool.governmentPermits.length})
+                  </h3>
+                  <div className="space-y-2">
+                    {editedSchool.governmentPermits.map((permit, idx) => (
+                      <div key={idx} className={`p-3 rounded-lg border ${idx === 0 ? 'bg-blue-500/10 border-blue-500/30' : 'bg-white/5 border-white/10'}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <div className="text-white text-sm font-mono">{permit.permitNumber || '(no number)'}</div>
+                            <div className="text-xs text-slate-400">{permit.schoolYear}</div>
+                          </div>
+                          <div className="flex flex-wrap justify-end gap-1">
+                            {permit.permitLevels.kindergarten && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">K</span>}
+                            {permit.permitLevels.elementary && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">E</span>}
+                            {permit.permitLevels.highSchool && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">JHS</span>}
+                            {permit.permitLevels.seniorHighSchool && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">SHS</span>}
+                          </div>
+                        </div>
+                        {idx === 0 && <div className="mt-1 text-xs text-blue-300">● Current permit</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <label className="block">
+                <input
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  onChange={handleUploadPermit}
+                  disabled={isProcessing}
+                  className="hidden"
+                />
+                <div className={`
+                  w-full bg-white/5 hover:bg-white/10 border-2 border-dashed border-white/20 hover:border-[#0C4DA2]/40 rounded-xl p-6 transition-all flex items-center justify-center gap-3 text-slate-300 hover:text-white
+                  ${isProcessing ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+                `}>
+                  <Upload className="w-5 h-5" />
+                  <span>{isProcessing ? 'Processing OCR...' : 'Upload Renewed Permit'}</span>
+                </div>
+              </label>
+              {uploadError && (
+                <div className="text-sm text-rose-300">{uploadError}</div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex gap-3 sticky bottom-0 bg-slate-900/95 pt-4">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="flex-1 px-6 py-3 bg-white/5 hover:bg-white/10 text-white rounded-lg transition-colors font-medium"
+                >
+                  Cancel
+                </button>
+                {!isNewSchool && (
+                  <button
+                    type="button"
+                    onClick={handleDelete}
+                    className="flex-1 px-6 py-3 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 rounded-lg transition-colors font-medium flex items-center justify-center gap-2"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                    Delete
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  className="flex-1 bg-gradient-to-r from-[#0C4DA2] to-[#B8860B] text-white px-6 py-3 rounded-lg font-medium hover:shadow-lg hover:shadow-blue-500/30 transition-all flex items-center justify-center gap-2"
+                >
+                  <Save className="w-5 h-5" />
+                  {isNewSchool ? 'Create School' : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

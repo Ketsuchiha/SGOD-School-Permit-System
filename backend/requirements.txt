@@ -1,0 +1,12 @@
+fastapi==0.110.0
+uvicorn==0.27.1
+python-multipart==0.0.9
+PyPDF2==3.0.1
+wheel
+easyocr==1.7.1
+geopy==2.4.1
+pandas==2.2.1
+openpyxl==3.1.2
+pydantic==2.6.3
+pillow==10.2.0
+numpy==1.26.4

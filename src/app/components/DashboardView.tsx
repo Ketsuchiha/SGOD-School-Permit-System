@@ -1,0 +1,226 @@
+import { useMemo, useState } from 'react';
+import { School } from '../data/mockData';
+import { useSchools } from '../contexts/SchoolContext';
+import { useNotifications } from '../contexts/NotificationContext';
+import { useAuditLog } from '../contexts/AuditLogContext';
+import { MetricCard } from './MetricCard';
+import { SchoolCards } from './SchoolCards';
+import { MapWidget } from './MapWidget';
+import { SplitViewEditor } from './SplitViewEditor';
+import { CreateSchoolForm } from './CreateSchoolForm';
+import { ActionBar } from './ActionBar';
+import { Sidebar } from './Sidebar';
+import { Building2, Baby, BookOpen, GraduationCap, School as SchoolIcon } from 'lucide-react';
+
+export function DashboardView() {
+  const { schools, setSchools, activeSchools } = useSchools();
+  const { addNotification } = useNotifications();
+  const { addLog } = useAuditLog();
+  const apiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
+  const [selectedSchool, setSelectedSchool] = useState<School | null>(null);
+  const [showEditor, setShowEditor] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [reportSchoolYear, setReportSchoolYear] = useState('');
+  const [reportStatus, setReportStatus] = useState<'all' | 'operational' | 'renewal' | 'not-operational'>('all');
+
+  const totalSchools = activeSchools.length;
+  const kindergartenPermits = activeSchools.filter((s: School) => s.permitLevels.kindergarten).length;
+  const elementaryPermits = activeSchools.filter((s: School) => s.permitLevels.elementary).length;
+  const highSchoolPermits = activeSchools.filter((s: School) => s.permitLevels.highSchool).length;
+  const seniorHighSchoolPermits = activeSchools.filter((s: School) => s.permitLevels.seniorHighSchool).length;
+
+  const availableSchoolYears = useMemo(() => {
+    return Array.from(new Set(activeSchools.map((school: School) => school.schoolYear))).sort();
+  }, [activeSchools]);
+
+  const handleUpdateSchool = (updatedSchool: School) => {
+    setSchools(schools.map((s: School) => s.id === updatedSchool.id ? updatedSchool : s));
+    setSelectedSchool(updatedSchool);
+  };
+
+  const handleDeleteSchool = (id: string) => {
+    setSchools((prevSchools) =>
+      prevSchools.map((school) =>
+                  school.id === id ? { ...school, deletedAt: new Date() } : school
+      )
+      );
+      addNotification('School Moved to Trash', `The school has been moved to the trash.`);
+      addLog('delete', `School "${schools.find(s => s.id === id)?.name}" moved to trash.`);
+      setShowEditor(false);
+  };
+
+  const handleAddSchool = (newSchool: School) => {
+    setSchools([...schools, newSchool]);
+    setShowCreateForm(false);
+  };
+
+
+  const handleSelectSchool = (school: School) => {
+    setSelectedSchool(school);
+    setShowEditor(true);
+  };
+
+  const handleExport = async () => {
+    const params = new URLSearchParams();
+    if (reportSchoolYear) params.set('schoolYear', reportSchoolYear);
+    if (reportStatus !== 'all') params.set('status', reportStatus);
+
+    const response = await fetch(`${apiBaseUrl}/api/reports/permits?${params.toString()}`);
+    if (!response.ok) return;
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'school-permit-report.xlsx';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="flex">
+      <Sidebar />
+      <div className="flex-1 p-8 pb-24 ml-20">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex items-center gap-4 mb-2">
+
+            <div>
+              <h1 className="text-3xl font-bold text-white">SDO Cabuyao: School Permit Registry</h1>
+              <p className="text-slate-400">Schools Division Office - Cabuyao City, Laguna</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Status Analytics */}
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
+          <MetricCard
+            title="Total Schools"
+            value={totalSchools}
+            icon={Building2}
+            trend={[45, 52, 48, 58, 62, 70, 75, 72, 78]}
+            color="#0C4DA2"
+          />
+          <MetricCard
+            title="Kindergarten Permits"
+            value={kindergartenPermits}
+            icon={Baby}
+            trend={[35, 38, 40, 42, 45, 48, 50, 52, 54]}
+            color="#10b981"
+          />
+          <MetricCard
+            title="Elementary Permits"
+            value={elementaryPermits}
+            icon={BookOpen}
+            trend={[40, 42, 44, 46, 48, 50, 52, 54, 56]}
+            color="#f59e0b"
+          />
+          <MetricCard
+            title="High School Permits"
+            value={highSchoolPermits}
+            icon={GraduationCap}
+            trend={[20, 22, 24, 26, 28, 30, 32, 34, 36]}
+            color="#8b5cf6"
+          />
+          <MetricCard
+            title="Senior High School"
+            value={seniorHighSchoolPermits}
+            icon={SchoolIcon}
+            trend={[15, 17, 19, 21, 23, 25, 27, 29, 31]}
+            color="#ec4899"
+          />
+        </div>
+
+        <div className="mb-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label htmlFor="reportSchoolYear" className="text-xs text-slate-400 mb-2 block">Report School Year</label>
+            <select
+              id="reportSchoolYear"
+              value={reportSchoolYear}
+              onChange={(event: React.ChangeEvent<HTMLSelectElement>) => setReportSchoolYear(event.target.value)}
+              className="w-full bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
+            >
+              <option value="">All School Years</option>
+              {availableSchoolYears.map((year) => (
+                <option key={year} value={year}>{year}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="reportStatus" className="text-xs text-slate-400 mb-2 block">Report Status</label>
+            <select
+              id="reportStatus"
+              value={reportStatus}
+              onChange={(event: React.ChangeEvent<HTMLSelectElement>) => setReportStatus(event.target.value as typeof reportStatus)}
+              className="w-full bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
+            >
+              <option value="all">All Status</option>
+              <option value="operational">Operational</option>
+              <option value="renewal">For Renewal</option>
+              <option value="not-operational">Not Operational</option>
+            </select>
+          </div>
+          <div className="flex items-end">
+            <div className="text-xs text-slate-400">
+              Export uses the selected filters to generate a formatted Excel report.
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* School Cards Sidebar - Takes 1 column */}
+          <div className="lg:col-span-1">
+            <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl p-6 shadow-2xl">
+              <div className="mb-4">
+                <h3 className="text-lg font-semibold text-white">Schools</h3>
+                <p className="text-sm text-slate-400">Click to view & edit permits</p>
+              </div>
+              <div className="max-h-[600px] overflow-y-auto pr-2">
+                <SchoolCards
+                  schools={activeSchools}
+                  onSelectSchool={handleSelectSchool}
+                  selectedSchoolId={selectedSchool?.id}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Map Widget - Takes 2 columns */}
+          <div className="lg:col-span-2">
+            <MapWidget
+              schools={activeSchools}
+              selectedSchool={selectedSchool || undefined}
+              onSelectSchool={handleSelectSchool}
+            />
+          </div>
+        </div>
+
+        {/* Split View Editor */}
+        {showEditor && selectedSchool && (
+          <SplitViewEditor
+            school={selectedSchool}
+            onClose={() => setShowEditor(false)}
+            onSave={handleUpdateSchool}
+            onDelete={handleDeleteSchool}
+          />
+        )}
+
+        {/* Create School Form */}
+        {showCreateForm && (
+          <CreateSchoolForm
+            onClose={() => setShowCreateForm(false)}
+            onSave={handleAddSchool}
+          />
+        )}
+
+        {/* Floating Action Bar */}
+        <ActionBar 
+          onExport={handleExport}
+          onCreateSchool={() => setShowCreateForm(true)}
+        />
+      </div>
+    </div>
+  );
+}
