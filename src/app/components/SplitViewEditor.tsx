@@ -3,6 +3,7 @@ import { X, Save, Upload, MapPin, Building2, FileText, AlertCircle, Trash2 } fro
 import { useEffect, useState, useRef } from 'react';
 import React from 'react';
 import { PDFViewer } from './PDFViewer';
+import { fileToDataUrl } from '../utils/fileDataUrl';
 
 interface SplitViewEditorProps {
   school: School | null;
@@ -116,16 +117,13 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     if (!file) return;
 
     storedFileRef.current = file;
-    if (editedSchool.permitUrl) {
-      URL.revokeObjectURL(editedSchool.permitUrl);
-    }
 
     setIsProcessing(true);
     setUploadError(null);
 
     try {
       const ocrResult = await requestOcr(file);
-      const permitUrl = URL.createObjectURL(file);
+      const permitUrl = await fileToDataUrl(file);
 
       const newPermit: GovernmentPermit = {
         permitNumber: ocrResult.permitNumber ?? '',

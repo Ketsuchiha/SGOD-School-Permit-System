@@ -4,6 +4,7 @@ import { X, Save, MapPin, Building2, FileText, Home, Upload, Loader2, CheckCircl
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { PDFViewer } from './PDFViewer';
 import { useSchools } from '../contexts/SchoolContext';
+import { fileToDataUrl } from '../utils/fileDataUrl';
 
 interface CreateSchoolFormProps {
   onClose: () => void;
@@ -119,7 +120,7 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
 
     try {
       const ocrResult = await requestOcr(file, page);
-      const permitUrl = URL.createObjectURL(file);
+      const permitUrl = await fileToDataUrl(file);
       const inferredName = inferNameFromFileName(file.name);
 
       const detectedPermits = (ocrResult.permits && ocrResult.permits.length > 0)
@@ -178,10 +179,6 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
-    if (newSchool.permitUrl) {
-      URL.revokeObjectURL(newSchool.permitUrl);
-    }
 
     storedFileRef.current = file;
     setUploadedFileName(file.name);
