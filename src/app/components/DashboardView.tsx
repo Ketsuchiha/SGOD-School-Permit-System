@@ -11,6 +11,7 @@ import { CreateSchoolForm } from './CreateSchoolForm';
 import { ActionBar } from './ActionBar';
 import { Sidebar } from './Sidebar';
 import { Building2, Baby, BookOpen, GraduationCap, School as SchoolIcon } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 export function DashboardView() {
   const { schools, setSchools, activeSchools } = useSchools();
@@ -51,6 +52,8 @@ export function DashboardView() {
 
   const handleAddSchool = (newSchool: School) => {
     setSchools([...schools, newSchool]);
+    addNotification('School Created', `${newSchool.name} was created successfully.`);
+    addLog('create', `School "${newSchool.name}" created.`);
     setShowCreateForm(false);
   };
 
@@ -61,22 +64,34 @@ export function DashboardView() {
   };
 
   const handleExport = async () => {
-    const params = new URLSearchParams();
-    if (reportSchoolYear) params.set('schoolYear', reportSchoolYear);
-    if (reportStatus !== 'all') params.set('status', reportStatus);
+    const response = await fetch(`${apiBaseUrl}/api/reports/permits`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        schoolYear: reportSchoolYear || null,
+        status: reportStatus,
+        schools: activeSchools,
+      }),
+    });
 
-    const response = await fetch(`${apiBaseUrl}/api/reports/permits?${params.toString()}`);
-    if (!response.ok) return;
+    if (!response.ok) {
+      addNotification('Export Failed', 'Unable to generate Excel report.');
+      return;
+    }
 
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'school-permit-report.xlsx';
+    link.download = reportSchoolYear
+      ? `school-permit-report-${reportSchoolYear}.xlsx`
+      : 'school-permit-report-all-years.xlsx';
     document.body.appendChild(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
+
+    addNotification('Export Complete', 'Excel report downloaded successfully.');
   };
 
   return (
@@ -136,31 +151,34 @@ export function DashboardView() {
         <div className="mb-8 grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label htmlFor="reportSchoolYear" className="text-xs text-slate-400 mb-2 block">Report School Year</label>
-            <select
-              id="reportSchoolYear"
-              value={reportSchoolYear}
-              onChange={(event: React.ChangeEvent<HTMLSelectElement>) => setReportSchoolYear(event.target.value)}
-              className="w-full bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
+            <Select
+              value={reportSchoolYear || 'all-years'}
+              onValueChange={(value) => setReportSchoolYear(value === 'all-years' ? '' : value)}
             >
-              <option value="">All School Years</option>
-              {availableSchoolYears.map((year) => (
-                <option key={year} value={year}>{year}</option>
-              ))}
-            </select>
+              <SelectTrigger id="reportSchoolYear" aria-label="Report School Year" className="w-full">
+                <SelectValue placeholder="All School Years" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all-years">All School Years</SelectItem>
+                {availableSchoolYears.map((year) => (
+                  <SelectItem key={year} value={year}>{year}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div>
             <label htmlFor="reportStatus" className="text-xs text-slate-400 mb-2 block">Report Status</label>
-            <select
-              id="reportStatus"
-              value={reportStatus}
-              onChange={(event: React.ChangeEvent<HTMLSelectElement>) => setReportStatus(event.target.value as typeof reportStatus)}
-              className="w-full bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
-            >
-              <option value="all">All Status</option>
-              <option value="operational">Operational</option>
-              <option value="renewal">For Renewal</option>
-              <option value="not-operational">Not Operational</option>
-            </select>
+            <Select value={reportStatus} onValueChange={(value) => setReportStatus(value as typeof reportStatus)}>
+              <SelectTrigger id="reportStatus" aria-label="Report Status" className="w-full">
+                <SelectValue placeholder="All Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="operational">Operational</SelectItem>
+                <SelectItem value="renewal">For Renewal</SelectItem>
+                <SelectItem value="not-operational">Not Operational</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="flex items-end">
             <div className="text-xs text-slate-400">

@@ -18,6 +18,13 @@ export interface GovernmentPermit {
   shsStrands?: SHSStrand[];
 }
 
+export interface OCRDiagnostics {
+  selectedPages?: number[];
+  confidence?: number;
+  missingFields?: string[];
+  topPageScores?: Array<{ page: number; score: number }>;
+}
+
 export interface School {
   id: string;
   name: string;
@@ -53,6 +60,8 @@ export interface OCRPermitResult {
   permitLevels?: PermitLevel;
   shsStrands?: SHSStrand[];
   permits?: GovernmentPermit[];
+  ocrEngine?: string;
+  ocrDiagnostics?: OCRDiagnostics;
 }
 
 export const mockSchools: School[] = [

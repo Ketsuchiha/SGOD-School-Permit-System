@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { School, SchoolType, SHSStrand, OCRPermitResult, GovernmentPermit, PermitLevel } from '../data/mockData';
+import { School, SchoolType, SHSStrand, OCRPermitResult, GovernmentPermit, PermitLevel, OCRDiagnostics } from '../data/mockData';
 import { X, Save, MapPin, Building2, FileText, Home, Upload, Loader2, CheckCircle2, RotateCcw } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { PDFViewer } from './PDFViewer';
 import { useSchools } from '../contexts/SchoolContext';
 import { fileToDataUrl } from '../utils/fileDataUrl';
+import { LocationPickerModal } from './LocationPickerModal';
 
 interface CreateSchoolFormProps {
   onClose: () => void;
@@ -28,6 +29,19 @@ const createEmptyPermit = (): GovernmentPermit => ({
 
 const hasText = (value?: string) => Boolean(value && value.trim().length > 0);
 
+const hasAnyPermitLevel = (levels?: PermitLevel) => {
+  if (!levels) return false;
+  return levels.kindergarten || levels.elementary || levels.highSchool || levels.seniorHighSchool;
+};
+
+const inferSchoolYearFromPermitNumber = (permitNumber?: string) => {
+  if (!permitNumber) return '';
+  const match = permitNumber.match(/\b(20\d{2})\b/);
+  if (!match) return '';
+  const start = Number(match[1]);
+  return `${start}-${start + 1}`;
+};
+
 const pickText = (incoming: string | undefined, fallback: string) => {
   return hasText(incoming) ? incoming!.trim() : fallback;
 };
@@ -50,8 +64,11 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
   const [ocrComplete, setOcrComplete] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState('');
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [ocrEngine, setOcrEngine] = useState<string>('none');
+  const [ocrDiagnostics, setOcrDiagnostics] = useState<OCRDiagnostics | null>(null);
   const [targetPageInput, setTargetPageInput] = useState<string>('');
   const [logoSrc, setLogoSrc] = useState<string>(import.meta.env?.VITE_DEPED_LOGO_URL ?? '/Deped_Logo.png');
+  const [showLocationPicker, setShowLocationPicker] = useState(false);
   const storedFileRef = useRef<File | null>(null);
   
   const [newSchool, setNewSchool] = useState<School>({
@@ -117,36 +134,48 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
     setIsProcessing(true);
     setOcrComplete(false);
     setUploadError(null);
+    setOcrEngine('none');
+    setOcrDiagnostics(null);
+
+    const permitUrl = await fileToDataUrl(file);
+    setNewSchool((prev) => ({ ...prev, permitUrl }));
 
     try {
       const ocrResult = await requestOcr(file, page);
-      const permitUrl = await fileToDataUrl(file);
+      setOcrEngine(ocrResult.ocrEngine || 'unknown');
+      setOcrDiagnostics(ocrResult.ocrDiagnostics || null);
       const inferredName = inferNameFromFileName(file.name);
+
+      const fallbackPermit: GovernmentPermit = {
+        permitNumber: ocrResult.permitNumber ?? '',
+        schoolYear: ocrResult.schoolYear ?? '',
+        issueDate: new Date().toISOString().split('T')[0],
+        permitLevels: ocrResult.permitLevels ?? createEmptyPermitLevels(),
+        shsStrands: ocrResult.shsStrands ?? [],
+      };
 
       const detectedPermits = (ocrResult.permits && ocrResult.permits.length > 0)
         ? ocrResult.permits
-        : [{
-            permitNumber: ocrResult.permitNumber ?? '',
-            schoolYear: ocrResult.schoolYear ?? '2024-2025',
-            issueDate: new Date().toISOString().split('T')[0],
-            permitLevels: ocrResult.permitLevels ?? createEmptyPermitLevels(),
-            shsStrands: ocrResult.shsStrands ?? [],
-          }];
+        : [fallbackPermit];
 
       const normalizedPermits = detectedPermits.map((permit) => ({
-        permitNumber: permit.permitNumber ?? '',
-        schoolYear: permit.schoolYear ?? '2024-2025',
+        permitNumber: permit.permitNumber || fallbackPermit.permitNumber || '',
+        schoolYear:
+          permit.schoolYear
+          || fallbackPermit.schoolYear
+          || inferSchoolYearFromPermitNumber(permit.permitNumber || fallbackPermit.permitNumber)
+          || '2024-2025',
         issueDate: permit.issueDate ?? new Date().toISOString().split('T')[0],
-        permitLevels: permit.permitLevels ?? createEmptyPermitLevels(),
-        shsStrands: permit.shsStrands ?? [],
+        permitLevels: hasAnyPermitLevel(permit.permitLevels) ? permit.permitLevels : fallbackPermit.permitLevels,
+        shsStrands: (permit.shsStrands && permit.shsStrands.length > 0) ? permit.shsStrands : fallbackPermit.shsStrands,
       }));
 
       const primaryPermit = normalizedPermits[0];
       const meaningfulOcr =
         hasText(ocrResult.name)
         || hasText(ocrResult.address)
-        || hasText(primaryPermit?.permitNumber)
-        || hasText(primaryPermit?.schoolYear)
+        || hasText(primaryPermit?.permitNumber || ocrResult.permitNumber)
+        || hasText(primaryPermit?.schoolYear || ocrResult.schoolYear)
         || Boolean(primaryPermit?.permitLevels?.kindergarten || primaryPermit?.permitLevels?.elementary || primaryPermit?.permitLevels?.highSchool || primaryPermit?.permitLevels?.seniorHighSchool)
         || Boolean((primaryPermit?.shsStrands || []).length > 0);
 
@@ -154,8 +183,8 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
         ...prev,
         name: pickText(ocrResult.name, prev.name || inferredName),
         address: pickText(ocrResult.address, prev.address),
-        permitNumber: primaryPermit.permitNumber || prev.permitNumber,
-        schoolYear: primaryPermit.schoolYear || prev.schoolYear,
+        permitNumber: primaryPermit.permitNumber || ocrResult.permitNumber || prev.permitNumber,
+        schoolYear: primaryPermit.schoolYear || ocrResult.schoolYear || prev.schoolYear,
         issueDate: primaryPermit.issueDate || prev.issueDate,
         permitLevels: primaryPermit.permitLevels,
         shsStrands: primaryPermit.shsStrands,
@@ -172,7 +201,9 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
     } catch (error) {
       setIsProcessing(false);
       setOcrComplete(false);
-      setUploadError('OCR failed. Please try a clearer scan.');
+      setOcrEngine('none');
+      setOcrDiagnostics(null);
+      setUploadError('OCR failed. File preview is kept; please fill missing fields manually.');
     }
   };
 
@@ -390,6 +421,29 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
                   </div>
                 </div>
                 {uploadError && <p className="mt-1.5 text-xs text-rose-300">{uploadError}</p>}
+                {ocrDiagnostics && (
+                  <div className="mt-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100 space-y-1">
+                    <div>
+                      OCR engine: <span className="font-semibold">{ocrEngine}</span>
+                      {Array.isArray(ocrDiagnostics.selectedPages) && ocrDiagnostics.selectedPages.length > 0 && (
+                        <span> | candidate pages: <span className="font-semibold">{ocrDiagnostics.selectedPages.join(', ')}</span></span>
+                      )}
+                      {typeof ocrDiagnostics.confidence === 'number' && (
+                        <span> | confidence: <span className="font-semibold">{Math.round(ocrDiagnostics.confidence * 100)}%</span></span>
+                      )}
+                    </div>
+                    {Array.isArray(ocrDiagnostics.missingFields) && ocrDiagnostics.missingFields.length > 0 && (
+                      <div>
+                        Missing fields: <span className="font-semibold">{ocrDiagnostics.missingFields.join(', ')}</span>
+                      </div>
+                    )}
+                    {Array.isArray(ocrDiagnostics.topPageScores) && ocrDiagnostics.topPageScores.length > 0 && (
+                      <div>
+                        Top page scores: <span className="font-semibold">{ocrDiagnostics.topPageScores.map((item) => `P${item.page}:${item.score}`).join(' | ')}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -465,7 +519,15 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
                         <MapPin className="w-4 h-4" />
                         Geocode
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowLocationPicker(true)}
+                        className="px-4 py-3 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 rounded-lg transition-colors whitespace-nowrap"
+                      >
+                        Pin Exact
+                      </button>
                     </div>
+                    <div className="mt-2 text-xs text-slate-300">Coordinates: {newSchool.lat.toFixed(6)}, {newSchool.lng.toFixed(6)}</div>
                   </div>
                 </div>
               </div>
@@ -508,6 +570,17 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
                     <div className="space-y-4">
                       <div>
                         <label className="text-xs text-slate-400 mb-2 block">Permit Number *</label>
+                    {showLocationPicker && (
+                      <LocationPickerModal
+                        initialLat={newSchool.lat}
+                        initialLng={newSchool.lng}
+                        onClose={() => setShowLocationPicker(false)}
+                        onConfirm={({ lat, lng }) => {
+                          setNewSchool((prev: School) => ({ ...prev, lat, lng }));
+                          setShowLocationPicker(false);
+                        }}
+                      />
+                    )}
                         <input
                           type="text"
                           value={permit.permitNumber}

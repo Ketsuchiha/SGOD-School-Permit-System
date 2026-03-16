@@ -178,4 +178,20 @@
     font-weight: var(--font-weight-normal);
     line-height: 1.5;
   }
+
+  select {
+    color: #f8fafc;
+    background-color: rgba(15, 23, 42, 0.85);
+  }
+
+  select option {
+    color: #0f172a;
+    background-color: #f8fafc;
+  }
+
+  select option:checked,
+  select option:hover {
+    color: #ffffff;
+    background-color: #0c4da2;
+  }
 }

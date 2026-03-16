@@ -5,8 +5,72 @@ from typing import Optional
 import uvicorn
 from fastapi.responses import Response
 import os
+import io
+import json
+import sqlite3
+from pathlib import Path
 
 app = FastAPI(title="DepEd Cabuyao School Permit Registry API")
+
+DB_PATH = Path(__file__).resolve().parents[1] / "data" / "sgod.db"
+
+
+def get_db_connection() -> sqlite3.Connection:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db() -> None:
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schools (
+                id TEXT PRIMARY KEY,
+                payload TEXT NOT NULL,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.commit()
+
+
+def load_schools_from_db() -> list[dict]:
+    with get_db_connection() as conn:
+        rows = conn.execute("SELECT payload FROM schools ORDER BY updated_at DESC").fetchall()
+
+    schools: list[dict] = []
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+            if isinstance(payload, dict):
+                schools.append(payload)
+        except Exception:
+            continue
+    return schools
+
+
+def save_schools_to_db(schools: list[dict]) -> None:
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM schools")
+        conn.executemany(
+            "INSERT INTO schools (id, payload, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            [
+                (
+                    str(school.get("id") or ""),
+                    json.dumps(school, ensure_ascii=True),
+                )
+                for school in schools
+                if isinstance(school, dict) and school.get("id")
+            ],
+        )
+        conn.commit()
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    init_db()
 
 # Enable CORS for frontend integration
 app.add_middleware(
@@ -25,6 +89,44 @@ class GeocodeResponse(BaseModel):
     lat: float
     lng: float
 
+class ReportPermitLevels(BaseModel):
+    kindergarten: bool = False
+    elementary: bool = False
+    highSchool: bool = False
+    seniorHighSchool: bool = False
+
+class ReportSchoolRecord(BaseModel):
+    name: str = ""
+    address: str = ""
+    permitNumber: str = ""
+    schoolYear: str = ""
+    status: str = ""
+    permitLevels: Optional[ReportPermitLevels] = None
+    governmentPermits: Optional[list[dict]] = None
+
+class PermitReportRequest(BaseModel):
+    schoolYear: Optional[str] = None
+    status: Optional[str] = None
+    schools: list[ReportSchoolRecord] = []
+
+
+class SchoolsBulkRequest(BaseModel):
+    schools: list[dict] = []
+
+
+@app.get("/api/schools")
+async def get_schools():
+    return {"schools": load_schools_from_db()}
+
+
+@app.put("/api/schools/bulk")
+async def put_schools(payload: SchoolsBulkRequest):
+    try:
+        save_schools_to_db(payload.schools)
+        return {"ok": True, "count": len(payload.schools)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save schools: {str(e)}")
+
 @app.post("/api/ocr/permit")
 async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = Form(None)):
     fname = (file.filename or "").lower()
@@ -39,6 +141,8 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
         import io, re
         text = ""
         engine = "pdf-text"
+        selected_page_numbers: list[int] = []
+        page_scores: list[dict] = []
 
         def score_page(page_text: str) -> int:
             compact = re.sub(r"\s+", " ", page_text).strip().lower()
@@ -82,16 +186,17 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
         if fname.endswith(".pdf"):
             reader = PdfReader(io.BytesIO(content))
             page_texts = [(page.extract_text() or "") for page in reader.pages]
+            page_scores = [
+                {"page": idx + 1, "score": score_page(page_texts[idx])}
+                for idx in range(len(page_texts))
+            ]
 
-            # If a specific page is requested, start with that page then append all others
-            # so every page's text is still available for extraction.
-            if targetPage is not None and 1 <= targetPage <= len(page_texts):
-                priority = [page_texts[targetPage - 1]]
-                rest = [t for i, t in enumerate(page_texts) if i != targetPage - 1]
-                text = "\n".join(priority + rest)
-            else:
-                # Scan ALL pages — permit data can appear on any page
-                text = "\n".join(page_texts)
+            # Prioritize likely permit pages first, then append remaining pages.
+            priority_idxs = selected_indices(len(page_texts), page_texts)
+            selected_page_numbers = [i + 1 for i in priority_idxs]
+            remaining_idxs = [i for i in range(len(page_texts)) if i not in set(priority_idxs)]
+            ordered_idxs = priority_idxs + remaining_idxs
+            text = "\n".join([page_texts[i] for i in ordered_idxs])
 
             # Scanned PDF fallback: if very little selectable text, try image OCR on all pages
             if len(re.sub(r"\s+", "", text)) < 80:
@@ -112,7 +217,10 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
 
                     ocr_doc = fitz.open(stream=content, filetype="pdf")
                     ocr_chunks: list[str] = []
-                    for i in range(len(ocr_doc)):
+                    # OCR likely permit pages first for better extraction quality.
+                    ocr_order = priority_idxs if priority_idxs else list(range(len(ocr_doc)))
+                    ocr_order += [i for i in range(len(ocr_doc)) if i not in set(ocr_order)]
+                    for i in ocr_order:
                         page = ocr_doc.load_page(i)
                         pix = page.get_pixmap(dpi=220)
                         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
@@ -124,6 +232,27 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
                         engine = "image-ocr"
                 except Exception:
                     pass
+        else:
+            try:
+                import pytesseract
+                from PIL import Image
+
+                candidates = [
+                    os.getenv("TESSERACT_CMD", "").strip(),
+                    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+                    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+                ]
+                for candidate in candidates:
+                    if candidate and os.path.exists(candidate):
+                        pytesseract.pytesseract.tesseract_cmd = candidate
+                        break
+
+                image = Image.open(io.BytesIO(content))
+                text = pytesseract.image_to_string(image) or ""
+                engine = "image-ocr"
+            except Exception:
+                text = ""
+                engine = "none"
 
         raw_text = text
         normalized = re.sub(r"\s+", " ", raw_text)
@@ -139,11 +268,23 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
         def normalize_permit_code(code: str) -> str:
             return re.sub(r"\s+", "", code).upper()
 
+        def find_first(patterns: list[str], source: str, flags: int = re.IGNORECASE) -> str:
+            for pattern in patterns:
+                match = re.search(pattern, source, flags)
+                if match:
+                    return clean_value(match.group(1))
+            return ""
+
         name = find(r"([A-Z][A-Z0-9\s\.,&'\-]{5,})\s*\(\s*School\s*\)")
         if not name:
             name = find(r"(?:Name\s+of\s+School|This\s+is\s+to\s+certify\s+that)[:\s]+([^\n\.,]+)")
         if not name:
             name = find(r"(?:for\s+)?([A-Z][A-Z0-9\s\.,&'\-]{8,})\s+located\s+at")
+        if not name:
+            name = find_first([
+                r"\n\s*([A-Z][A-Z\s\.,&'\-]{6,})\s*\n\s*\(?\s*School\s*\)?",
+                r"\b(ST\.?\s+VINCENT\s+COLLEGE\s+OF\s+CABUYAO)\b",
+            ], raw_text, re.IGNORECASE)
         name = clean_value(name)
 
         address = ""
@@ -154,11 +295,22 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
             address = find(r"([A-Z0-9][A-Z0-9\s\.,'\-/]{6,})\s*\(?\s*Complete\s+Address\s*\)?")
         if not address:
             address = find(r"(?:located\s+at|Address:)[:\s]+([^\n]+?)(?:\.|\s+GP\s*No\.|\s+Government\s*Permit|\s+School\s*Year|$)")
+        if not address:
+            address = find_first([
+                r"\n\s*([^\n]{4,120}Cabuyao\s+City)\s*\n\s*\(?\s*Complete\s+Address\s*\)?",
+                r"\b([A-Z][A-Za-z\s,.-]{3,120}Cabuyao\s+City)\b",
+            ], raw_text, re.IGNORECASE)
         address = clean_value(address)
 
         permit_sample_pairs = re.findall(r"\bNo\.?\s*([A-Z]{1,6}\s*-\s*\d{2,6})\s*,?\s*s\.?\s*(\d{4})", normalized, re.IGNORECASE)
         permit_candidates = [normalize_permit_code(p) for p, _ in permit_sample_pairs]
         inferred_school_years = [f"{y.strip()}-{int(y.strip()) + 1}" for _, y in permit_sample_pairs if y.strip().isdigit()]
+
+        permit_sample_pairs.extend(
+            re.findall(r"(?:government\s+permit\s*\([^\)]*\)\s*)?no\.?\s*([A-Z]{1,8}\s*-\s*\d{2,6})\s*,?\s*s\.?\s*(20\d{2})", normalized, re.IGNORECASE)
+        )
+        permit_candidates.extend([normalize_permit_code(p) for p, _ in permit_sample_pairs])
+        inferred_school_years.extend([f"{y.strip()}-{int(y.strip()) + 1}" for _, y in permit_sample_pairs if y.strip().isdigit()])
 
         permit_candidates.extend([
             normalize_permit_code(p)
@@ -174,6 +326,11 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
             for p in re.findall(r"\b(DEPED-[A-Z0-9\-]{6,})\b", normalized, re.IGNORECASE)
         ])
 
+        permit_candidates.extend([
+            normalize_permit_code(p)
+            for p in re.findall(r"\b([A-Z]{2,6}\s*-\s*[A-Z]{2,6}\s*-\s*20\d{2}\s*-\s*\d{2,6})\b", normalized, re.IGNORECASE)
+        ])
+
         deduped_permits = []
         seen = set()
         for p in permit_candidates:
@@ -183,6 +340,9 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
                 seen.add(key)
 
         school_year_matches = re.findall(r"(?:effective\s+this\s+school\s+year\s+)?(20\d{2}\s*[-/]\s*20\d{2})", normalized, re.IGNORECASE)
+        school_year_matches.extend(
+            re.findall(r"effective\s+this\s+school\s+year\s+([0-9]{4}\s*[-/]\s*[0-9]{4})", normalized, re.IGNORECASE)
+        )
         school_years = []
         year_seen = set()
         for y in (school_year_matches + inferred_school_years):
@@ -197,9 +357,12 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
         default_levels = {
             "kindergarten": contains_any(normalized, [r"\bkindergarten\b", r"\bK\b\s*-\s*kindergarten"]),
             "elementary": contains_any(normalized, [r"\belementary\b", r"\bE\b\s*-\s*elementary"]),
-            "highSchool": contains_any(normalized, [r"junior\s+high\s+school", r"\bhigh\s+school\b", r"\bJHS\b", r"\bJ\b\s*-"]),
-            "seniorHighSchool": contains_any(normalized, [r"senior\s+high\s+school", r"\bSHS\b"]),
+            "highSchool": contains_any(normalized, [r"junior\s+high\s+school", r"\bJHS\b", r"\bJ\b\s*-"]),
+            "seniorHighSchool": contains_any(normalized, [r"senior\s+high\s+school", r"\bSHS\b", r"senior\s+high\s+school\s+program"]),
         }
+
+        if default_levels["seniorHighSchool"]:
+            default_levels["highSchool"] = False
 
         strand_patterns = {
             "STEM": [r"\bSTEM\b", r"science\s*,?\s*technology\s*,?\s*engineering\s*(?:and|&)\s*mathematics"],
@@ -254,15 +417,43 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
         }
 
         school_year = find(r"(\d{4}\s*-\s*\d{4})")
+        selected_scores = [
+            item["score"] for item in page_scores if item["page"] in set(selected_page_numbers)
+        ]
+        if not selected_scores and page_scores:
+            selected_scores = [item["score"] for item in page_scores[:3]]
+        confidence = 0.0
+        if selected_scores:
+            confidence = min(1.0, max(0.0, sum(selected_scores) / (len(selected_scores) * 12.0)))
+
+        missing_fields = []
+        if not name:
+            missing_fields.append("name")
+        if not address:
+            missing_fields.append("address")
+        if not primary["permitNumber"]:
+            missing_fields.append("permitNumber")
+        resolved_school_year = primary["schoolYear"] or school_year
+        if not resolved_school_year:
+            missing_fields.append("schoolYear")
+        if not any(primary["permitLevels"].values()):
+            missing_fields.append("permitLevels")
+
         return {
             "name": name,
             "address": address,
             "permitNumber": primary["permitNumber"],
-            "schoolYear": primary["schoolYear"] or school_year,
+            "schoolYear": resolved_school_year,
             "permitLevels": primary["permitLevels"],
             "shsStrands": primary["shsStrands"],
             "permits": permits,
             "ocrEngine": engine,
+            "ocrDiagnostics": {
+                "selectedPages": selected_page_numbers,
+                "confidence": confidence,
+                "missingFields": missing_fields,
+                "topPageScores": sorted(page_scores, key=lambda item: item["score"], reverse=True)[:5],
+            },
         }
     except Exception as e:
         # Fallback: return empty fields but keep endpoint responsive
@@ -280,38 +471,70 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
             "shsStrands": [],
             "permits": [],
             "ocrEngine": "none",
+            "ocrDiagnostics": {
+                "selectedPages": [],
+                "confidence": 0.0,
+                "missingFields": ["name", "address", "permitNumber", "schoolYear", "permitLevels"],
+                "topPageScores": [],
+            },
         }
 
 @app.post("/api/geocode", response_model=GeocodeResponse)
 async def geocode(request: GeocodeRequest):
     try:
         from importlib import import_module
+        import re
         geocoders = import_module("geopy.geocoders")
         Nominatim = geocoders.Nominatim
         geolocator = Nominatim(user_agent="deped-cabuyao-school-registry")
-        suffix = ", Cabuyao, Laguna, Philippines"
 
-        def try_geocode(q: str):
-            if "Laguna" not in q:
-                q += suffix
-            return geolocator.geocode(q, timeout=10)
+        address = (request.address or "").strip()
+        name = (request.name or "").strip()
+
+        # Accept direct coordinate input, e.g. "14.2722, 121.1239".
+        coord_match = re.search(r"(-?\d{1,3}(?:\.\d+)?)\s*[,\s]\s*(-?\d{1,3}(?:\.\d+)?)", address)
+        if coord_match:
+            lat = float(coord_match.group(1))
+            lng = float(coord_match.group(2))
+            if -90 <= lat <= 90 and -180 <= lng <= 180:
+                return {"lat": lat, "lng": lng}
+
+        queries = []
+        if name and address:
+            queries.append(f"{name}, {address}, Cabuyao City, Laguna, Philippines")
+            queries.append(f"{name}, {address}, Laguna, Philippines")
+        if address:
+            queries.append(f"{address}, Cabuyao City, Laguna, Philippines")
+            queries.append(f"{address}, Laguna, Philippines")
+            queries.append(address)
+        if name:
+            queries.append(f"{name}, Cabuyao City, Laguna, Philippines")
+            queries.append(f"{name}, Laguna, Philippines")
+
+        deduped_queries = []
+        seen = set()
+        for q in queries:
+            key = q.lower().strip()
+            if key and key not in seen:
+                deduped_queries.append(q)
+                seen.add(key)
 
         location = None
-        # 1st attempt: school name + address (most accurate)
-        if request.name and request.name.strip():
-            location = try_geocode(f"{request.name.strip()}, {request.address.strip()}")
-        # 2nd attempt: address only
-        if not location:
-            location = try_geocode(request.address.strip())
-        # 3rd attempt: school name only (last resort)
-        if not location and request.name and request.name.strip():
-            location = try_geocode(request.name.strip())
+        for query in deduped_queries:
+            try:
+                location = geolocator.geocode(query, timeout=12, exactly_one=True, country_codes="ph")
+            except Exception:
+                location = None
+            if location:
+                break
 
         if not location:
             raise HTTPException(status_code=404, detail="Address not found")
         return {"lat": location.latitude, "lng": location.longitude}
     except ImportError:
         raise HTTPException(status_code=503, detail="Geocoding service unavailable")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Geocoding failed: {str(e)}")
 
@@ -328,6 +551,113 @@ async def get_permit_report(
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=school_permits.csv"}
     )
+
+
+@app.post("/api/reports/permits")
+async def create_permit_report(payload: PermitReportRequest):
+    try:
+        from openpyxl import Workbook
+
+        def level_text(levels: Optional[ReportPermitLevels]) -> str:
+            if not levels:
+                return ""
+            tags = []
+            if levels.kindergarten:
+                tags.append("Kindergarten")
+            if levels.elementary:
+                tags.append("Elementary")
+            if levels.highSchool:
+                tags.append("Junior High School")
+            if levels.seniorHighSchool:
+                tags.append("Senior High School")
+            return ", ".join(tags)
+
+        wb = Workbook()
+        # Remove the default empty sheet created by openpyxl
+        wb.remove(wb.active)
+
+        selected_year = (payload.schoolYear or "").strip()
+        selected_status = (payload.status or "").strip().lower()
+        headers = ["School Name", "School Address", "Government Permit", "Year Level"]
+
+        def get_permit_number(school: ReportSchoolRecord) -> str:
+            num = (school.permitNumber or "").strip()
+            if not num and school.governmentPermits:
+                for permit in school.governmentPermits:
+                    candidate = str(permit.get("permitNumber", "")).strip()
+                    if candidate:
+                        return candidate
+            return num
+
+        def auto_size(ws_obj):
+            for col in ws_obj.columns:
+                max_len = 0
+                for cell in col:
+                    cell_val = "" if cell.value is None else str(cell.value)
+                    if len(cell_val) > max_len:
+                        max_len = len(cell_val)
+                ws_obj.column_dimensions[col[0].column_letter].width = min(max(14, max_len + 2), 60)
+
+        # Filter by status first
+        filtered = []
+        for school in payload.schools:
+            school_status = (school.status or "").strip().lower()
+            if selected_status and selected_status != "all" and school_status != selected_status:
+                continue
+            filtered.append(school)
+
+        if selected_year:
+            # Single worksheet for a specific school year
+            ws = wb.create_sheet(title=selected_year[:31])
+            ws.append(headers)
+            for school in filtered:
+                if (school.schoolYear or "").strip() != selected_year:
+                    continue
+                ws.append([
+                    (school.name or "").strip(),
+                    (school.address or "").strip(),
+                    get_permit_number(school),
+                    level_text(school.permitLevels),
+                ])
+            auto_size(ws)
+        else:
+            # One worksheet per school year, sorted; "No Year" sheet for blanks
+            from collections import defaultdict
+            year_buckets: dict = defaultdict(list)
+            for school in filtered:
+                yr = (school.schoolYear or "").strip() or "No Year"
+                year_buckets[yr].append(school)
+
+            for yr in sorted(year_buckets.keys()):
+                sheet_title = yr[:31]
+                ws = wb.create_sheet(title=sheet_title)
+                ws.append(headers)
+                for school in year_buckets[yr]:
+                    ws.append([
+                        (school.name or "").strip(),
+                        (school.address or "").strip(),
+                        get_permit_number(school),
+                        level_text(school.permitLevels),
+                    ])
+                auto_size(ws)
+
+        # Ensure at least one sheet exists
+        if not wb.worksheets:
+            ws = wb.create_sheet(title="No Data")
+            ws.append(headers)
+
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename_year = selected_year if selected_year else "all-years"
+        return Response(
+            content=output.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=school-permit-report-{filename_year}.xlsx"},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

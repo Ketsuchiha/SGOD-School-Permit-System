@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { useSchools } from '../contexts/SchoolContext';
 import { Sidebar } from './Sidebar';
 import { SchoolDetailModal } from './SchoolDetailModal';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 const apiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
@@ -110,17 +111,17 @@ export function MapView() {
           />
         </div>
 
-        <select
-          value={filter}
-          aria-label="Filter by status"
-          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFilter(e.target.value as any)}
-          className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
-        >
-          <option value="all">All Status</option>
-          <option value="operational">Operational</option>
-          <option value="renewal">Renewal</option>
-          <option value="not-operational">Not Operational</option>
-        </select>
+        <Select value={filter} onValueChange={(value) => setFilter(value as School['status'] | 'all')}>
+          <SelectTrigger aria-label="Filter by status" className="w-[210px]">
+            <SelectValue placeholder="All Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Status</SelectItem>
+            <SelectItem value="operational">Operational</SelectItem>
+            <SelectItem value="renewal">Renewal</SelectItem>
+            <SelectItem value="not-operational">Not Operational</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Map Container */}

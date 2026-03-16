@@ -1,22 +1,13 @@
 
-import { useEffect } from 'react';
-import { useNotifications, Notification } from '../contexts/NotificationContext';
-import { showNotification } from '../notifications/notificationManager';
+import { useNotifications } from '../contexts/NotificationContext';
 import { X } from 'lucide-react';
 
 export function NotificationDisplay() {
   const { notifications, removeNotification } = useNotifications();
 
-  useEffect(() => {
-    if (notifications.length > 0) {
-      const latestNotification = notifications[notifications.length - 1];
-      showNotification(latestNotification.title, { body: latestNotification.message });
-    }
-  }, [notifications]);
-
   return (
     <div className="fixed top-8 right-8 z-50 space-y-4">
-      {notifications.map((notification: Notification) => (
+      {notifications.map((notification) => (
         <div
           key={notification.id}
           className="bg-slate-800 border border-slate-700 rounded-2xl shadow-xl p-4 max-w-sm w-full animate-fade-in-right"

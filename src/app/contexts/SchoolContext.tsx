@@ -1,7 +1,27 @@
-import { createContext, useState, useMemo, useContext, useEffect } from 'react';
+import { createContext, useState, useMemo, useContext, useEffect, useRef } from 'react';
 import { School } from '../data/mockData';
 
 const STORAGE_KEY = 'sgod:schools';
+const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
+
+const persistSchools = (schools: School[]) => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(schools));
+    return;
+  } catch {
+    // Fallback for quota pressure: keep records but drop embedded file payloads.
+    try {
+      const lightweight = schools.map((school) => ({ ...school, permitUrl: undefined }));
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweight));
+    } catch {
+      // Last fallback: do not block UI when storage is unavailable.
+    }
+  }
+};
 
 const loadSchools = (): School[] => {
   if (typeof window === 'undefined') {
@@ -25,6 +45,26 @@ const loadSchools = (): School[] => {
   }
 };
 
+const fetchSchoolsFromApi = async (): Promise<School[]> => {
+  const response = await fetch(`${API_BASE_URL}/api/schools`);
+  if (!response.ok) {
+    throw new Error('Failed to load schools from API');
+  }
+  const data = await response.json();
+  if (!Array.isArray(data?.schools)) {
+    return [];
+  }
+  return data.schools as School[];
+};
+
+const saveSchoolsToApi = async (schools: School[]) => {
+  await fetch(`${API_BASE_URL}/api/schools/bulk`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ schools }),
+  });
+};
+
 interface SchoolContextType {
   schools: School[];
   setSchools: React.Dispatch<React.SetStateAction<School[]>>;
@@ -36,6 +76,42 @@ const SchoolContext = createContext<SchoolContextType | undefined>(undefined);
 
 export function SchoolProvider({ children }: { children: React.ReactNode }) {
   const [schools, setSchools] = useState<School[]>(() => loadSchools());
+  const hasHydratedFromApi = useRef(false);
+  const skipNextApiSync = useRef(false);
+  const syncTimer = useRef<number | null>(null);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const hydrateFromApi = async () => {
+      const localSchools = loadSchools();
+
+      try {
+        const remoteSchools = await fetchSchoolsFromApi();
+        if (isCancelled) {
+          return;
+        }
+
+        if (remoteSchools.length > 0 || localSchools.length === 0) {
+          skipNextApiSync.current = true;
+          setSchools(remoteSchools);
+        } else {
+          // One-time migration: seed DB from existing local browser data.
+          await saveSchoolsToApi(localSchools);
+        }
+      } catch {
+        // Keep local mode when API/database is unavailable.
+      } finally {
+        hasHydratedFromApi.current = true;
+      }
+    };
+
+    hydrateFromApi();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const thirtyDaysAgo = new Date();
@@ -47,12 +123,35 @@ export function SchoolProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') {
+    persistSchools(schools);
+
+    if (!hasHydratedFromApi.current) {
       return;
     }
 
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(schools));
+    if (skipNextApiSync.current) {
+      skipNextApiSync.current = false;
+      return;
+    }
+
+    if (syncTimer.current) {
+      window.clearTimeout(syncTimer.current);
+    }
+
+    syncTimer.current = window.setTimeout(() => {
+      saveSchoolsToApi(schools).catch(() => {
+        // Keep app usable when backend sync fails.
+      });
+    }, 500);
   }, [schools]);
+
+  useEffect(() => {
+    return () => {
+      if (syncTimer.current) {
+        window.clearTimeout(syncTimer.current);
+      }
+    };
+  }, []);
 
   const activeSchools = useMemo(() => schools.filter((s) => !s.deletedAt), [schools]);
   const deletedSchools = useMemo(() => schools.filter((s) => s.deletedAt), [schools]);

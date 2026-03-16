@@ -1,9 +1,11 @@
-import { School, SchoolStatus, SHSStrand, OCRPermitResult, GovernmentPermit } from '../data/mockData';
+import { School, SchoolStatus, SHSStrand, OCRPermitResult, GovernmentPermit, OCRDiagnostics } from '../data/mockData';
 import { X, Save, Upload, MapPin, Building2, FileText, AlertCircle, Trash2 } from 'lucide-react';
 import { useEffect, useState, useRef } from 'react';
 import React from 'react';
 import { PDFViewer } from './PDFViewer';
 import { fileToDataUrl } from '../utils/fileDataUrl';
+import { LocationPickerModal } from './LocationPickerModal';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 interface SplitViewEditorProps {
   school: School | null;
@@ -45,6 +47,22 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
   const [manualOverride, setManualOverride] = useState(editedSchool.logicType === 'manual');
   const [isProcessing, setIsProcessing] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [ocrEngine, setOcrEngine] = useState<string>('none');
+  const [ocrDiagnostics, setOcrDiagnostics] = useState<OCRDiagnostics | null>(null);
+  const [showLocationPicker, setShowLocationPicker] = useState(false);
+
+  const hasAnyPermitLevel = (levels?: GovernmentPermit['permitLevels']) => {
+    if (!levels) return false;
+    return levels.kindergarten || levels.elementary || levels.highSchool || levels.seniorHighSchool;
+  };
+
+  const inferSchoolYearFromPermitNumber = (permitNumber?: string) => {
+    if (!permitNumber) return '';
+    const match = permitNumber.match(/\b(20\d{2})\b/);
+    if (!match) return '';
+    const start = Number(match[1]);
+    return `${start}-${start + 1}`;
+  };
 
   const toggleStrand = (strand: SHSStrand) => {
     const currentStrands = editedSchool.shsStrands || [];
@@ -120,17 +138,33 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
 
     setIsProcessing(true);
     setUploadError(null);
+    setOcrEngine('none');
+    setOcrDiagnostics(null);
+
+    const permitUrl = await fileToDataUrl(file);
+    setEditedSchool((prev) => ({ ...prev, permitUrl }));
 
     try {
       const ocrResult = await requestOcr(file);
-      const permitUrl = await fileToDataUrl(file);
+      setOcrEngine(ocrResult.ocrEngine || 'unknown');
+      setOcrDiagnostics(ocrResult.ocrDiagnostics || null);
 
-      const newPermit: GovernmentPermit = {
+      const fallbackPermit: GovernmentPermit = {
         permitNumber: ocrResult.permitNumber ?? '',
         schoolYear: ocrResult.schoolYear ?? '',
         issueDate: new Date().toISOString().split('T')[0],
         permitLevels: ocrResult.permitLevels ?? { kindergarten: false, elementary: false, highSchool: false, seniorHighSchool: false },
         shsStrands: ocrResult.shsStrands ?? [],
+      };
+
+      const newPermit: GovernmentPermit = {
+        permitNumber: fallbackPermit.permitNumber,
+        schoolYear: fallbackPermit.schoolYear || inferSchoolYearFromPermitNumber(fallbackPermit.permitNumber),
+        issueDate: new Date().toISOString().split('T')[0],
+        permitLevels: hasAnyPermitLevel(fallbackPermit.permitLevels)
+          ? fallbackPermit.permitLevels
+          : { kindergarten: false, elementary: false, highSchool: false, seniorHighSchool: false },
+        shsStrands: fallbackPermit.shsStrands ?? [],
       };
 
       setEditedSchool((prev: School) => {
@@ -155,7 +189,9 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
       setIsProcessing(false);
     } catch (error) {
       setIsProcessing(false);
-      setUploadError('OCR failed. Please try a clearer scan.');
+      setOcrEngine('none');
+      setOcrDiagnostics(null);
+      setUploadError('OCR failed. File preview is kept; please fill missing fields manually.');
     }
   };
 
@@ -251,7 +287,15 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                         <MapPin className="w-4 h-4" />
                         Geocode
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowLocationPicker(true)}
+                        className="px-4 py-3 bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 rounded-lg transition-colors whitespace-nowrap"
+                      >
+                        Pin Exact
+                      </button>
                     </div>
+                    <div className="mt-2 text-xs text-slate-300">Coordinates: {editedSchool.lat.toFixed(6)}, {editedSchool.lng.toFixed(6)}</div>
                   </div>
                 </div>
               </div>
@@ -413,16 +457,19 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                 <div className="space-y-4">
                   <div>
                     <label className="text-xs text-slate-400 mb-2 block">Current Status *</label>
-                    <select
+                    <Select
                       value={editedSchool.status}
-                      aria-label="Current Status"
-                      onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setEditedSchool({ ...editedSchool, status: e.target.value as SchoolStatus })}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
+                      onValueChange={(value) => setEditedSchool({ ...editedSchool, status: value as SchoolStatus })}
                     >
-                      <option value="operational">Operational</option>
-                      <option value="renewal">For Renewal</option>
-                      <option value="not-operational">Not Operational</option>
-                    </select>
+                      <SelectTrigger aria-label="Current Status" className="w-full bg-white/5 border-white/10 rounded-lg">
+                        <SelectValue placeholder="Select status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="operational">Operational</SelectItem>
+                        <SelectItem value="renewal">For Renewal</SelectItem>
+                        <SelectItem value="not-operational">Not Operational</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   <div className="flex items-center justify-between p-4 bg-white/5 rounded-lg border border-white/10">
@@ -496,6 +543,29 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
               {uploadError && (
                 <div className="text-sm text-rose-300">{uploadError}</div>
               )}
+              {ocrDiagnostics && (
+                <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100 space-y-1">
+                  <div>
+                    OCR engine: <span className="font-semibold">{ocrEngine}</span>
+                    {Array.isArray(ocrDiagnostics.selectedPages) && ocrDiagnostics.selectedPages.length > 0 && (
+                      <span> | candidate pages: <span className="font-semibold">{ocrDiagnostics.selectedPages.join(', ')}</span></span>
+                    )}
+                    {typeof ocrDiagnostics.confidence === 'number' && (
+                      <span> | confidence: <span className="font-semibold">{Math.round(ocrDiagnostics.confidence * 100)}%</span></span>
+                    )}
+                  </div>
+                  {Array.isArray(ocrDiagnostics.missingFields) && ocrDiagnostics.missingFields.length > 0 && (
+                    <div>
+                      Missing fields: <span className="font-semibold">{ocrDiagnostics.missingFields.join(', ')}</span>
+                    </div>
+                  )}
+                  {Array.isArray(ocrDiagnostics.topPageScores) && ocrDiagnostics.topPageScores.length > 0 && (
+                    <div>
+                      Top page scores: <span className="font-semibold">{ocrDiagnostics.topPageScores.map((item) => `P${item.page}:${item.score}`).join(' | ')}</span>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Action Buttons */}
               <div className="flex gap-3 sticky bottom-0 bg-slate-900/95 pt-4">
@@ -529,6 +599,17 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
           </div>
         </div>
       </div>
+      {showLocationPicker && (
+        <LocationPickerModal
+          initialLat={editedSchool.lat}
+          initialLng={editedSchool.lng}
+          onClose={() => setShowLocationPicker(false)}
+          onConfirm={({ lat, lng }) => {
+            setEditedSchool((prev: School) => ({ ...prev, lat, lng }));
+            setShowLocationPicker(false);
+          }}
+        />
+      )}
     </div>
   );
 }
