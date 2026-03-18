@@ -21,7 +21,59 @@ const STRAND_LABELS: Record<string, string> = {
 
 export function SchoolDetailModal({ school, onClose }: SchoolDetailModalProps) {
   const hasPdf = Boolean(school.permitUrl);
-  const permits = school.governmentPermits ?? [];
+  const permits = (() => {
+    const normalized = (school.governmentPermits ?? []).map((permit) => ({
+      permitNumber: permit.permitNumber || '',
+      schoolYear: permit.schoolYear || '',
+      issueDate: permit.issueDate || school.issueDate || '',
+      permitLevels: {
+        kindergarten: Boolean(permit.permitLevels?.kindergarten),
+        elementary: Boolean(permit.permitLevels?.elementary),
+        highSchool: Boolean(permit.permitLevels?.highSchool),
+        seniorHighSchool: Boolean(permit.permitLevels?.seniorHighSchool),
+      },
+      shsStrands: permit.shsStrands ?? [],
+    }));
+
+    const fallbackPermit = {
+      permitNumber: school.permitNumber || '',
+      schoolYear: school.schoolYear || '',
+      issueDate: school.issueDate || '',
+      permitLevels: {
+        kindergarten: Boolean(school.permitLevels?.kindergarten),
+        elementary: Boolean(school.permitLevels?.elementary),
+        highSchool: Boolean(school.permitLevels?.highSchool),
+        seniorHighSchool: Boolean(school.permitLevels?.seniorHighSchool),
+      },
+      shsStrands: school.shsStrands ?? [],
+    };
+
+    const hasFallbackData = Boolean(
+      fallbackPermit.permitNumber ||
+      fallbackPermit.schoolYear ||
+      fallbackPermit.permitLevels.kindergarten ||
+      fallbackPermit.permitLevels.elementary ||
+      fallbackPermit.permitLevels.highSchool ||
+      fallbackPermit.permitLevels.seniorHighSchool
+    );
+
+    const isDuplicateOfExisting = normalized.some((permit) => (
+      (permit.permitNumber || '').trim().toLowerCase() === (fallbackPermit.permitNumber || '').trim().toLowerCase()
+      && (permit.schoolYear || '').trim() === (fallbackPermit.schoolYear || '').trim()
+    ));
+
+    const merged = [...normalized];
+    if (hasFallbackData && !isDuplicateOfExisting) {
+      merged.push(fallbackPermit);
+    }
+
+    const yearStart = (value: string) => {
+      const match = value.match(/(20\d{2})/);
+      return match ? Number(match[1]) : -1;
+    };
+
+    return merged.sort((a, b) => yearStart(b.schoolYear) - yearStart(a.schoolYear));
+  })();
   const currentPermit = permits[0] ?? null;
 
   return (

@@ -251,34 +251,66 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
         shsStrands: ocrResult.shsStrands ?? [],
       };
 
-      const newPermit: GovernmentPermit = {
-        permitNumber: fallbackPermit.permitNumber,
-        schoolYear: fallbackPermit.schoolYear || inferSchoolYearFromPermitNumber(fallbackPermit.permitNumber),
-        issueDate: new Date().toISOString().split('T')[0],
-        permitLevels: hasAnyPermitLevel(fallbackPermit.permitLevels)
-          ? fallbackPermit.permitLevels
-          : { kindergarten: false, elementary: false, highSchool: false, seniorHighSchool: false },
-        shsStrands: fallbackPermit.shsStrands ?? [],
-      };
+      const detectedPermits = (ocrResult.permits && ocrResult.permits.length > 0)
+        ? ocrResult.permits
+        : [fallbackPermit];
+
+      const normalizedPermits: GovernmentPermit[] = detectedPermits.map((permit) => {
+        const permitNumber = permit.permitNumber || fallbackPermit.permitNumber || '';
+        const permitLevels = hasAnyPermitLevel(permit.permitLevels)
+          ? permit.permitLevels
+          : fallbackPermit.permitLevels;
+        return {
+          permitNumber,
+          schoolYear: permit.schoolYear || fallbackPermit.schoolYear || inferSchoolYearFromPermitNumber(permitNumber) || '',
+          issueDate: permit.issueDate || new Date().toISOString().split('T')[0],
+          permitLevels,
+          shsStrands: (permit.shsStrands && permit.shsStrands.length > 0) ? permit.shsStrands : (fallbackPermit.shsStrands ?? []),
+        };
+      });
+
+      const hasMeaningfulPermit = normalizedPermits.some((permit) =>
+        Boolean(
+          permit.permitNumber ||
+          permit.schoolYear ||
+          permit.permitLevels.kindergarten ||
+          permit.permitLevels.elementary ||
+          permit.permitLevels.highSchool ||
+          permit.permitLevels.seniorHighSchool
+        )
+      );
+
+      const primaryPermit = normalizedPermits[0] ?? fallbackPermit;
 
       setEditedSchool((prev: School) => {
         const existing = prev.governmentPermits ?? [];
-        const deduped = newPermit.permitNumber
-          ? [newPermit, ...existing.filter((p) => p.permitNumber !== newPermit.permitNumber)]
-          : [newPermit, ...existing];
+
+        const makePermitKey = (permit: GovernmentPermit) => {
+          const permitNo = (permit.permitNumber || '').trim().toLowerCase();
+          const schoolYear = (permit.schoolYear || '').trim().toLowerCase();
+          return `${permitNo}::${schoolYear}`;
+        };
+
+        const incoming = hasMeaningfulPermit ? normalizedPermits : [];
+        const incomingKeys = new Set(incoming.map(makePermitKey));
+        const preservedExisting = existing.filter((permit) => !incomingKeys.has(makePermitKey(permit)));
+        const mergedHistory = [...incoming, ...preservedExisting];
+
         return {
           ...prev,
           name: ocrResult.name ?? prev.name,
           address: ocrResult.address ?? prev.address,
-          permitNumber: newPermit.permitNumber || prev.permitNumber,
-          schoolYear: newPermit.schoolYear || prev.schoolYear,
-          permitLevels: newPermit.permitLevels,
-          shsStrands: newPermit.shsStrands ?? prev.shsStrands,
+          permitNumber: primaryPermit.permitNumber || prev.permitNumber,
+          schoolYear: primaryPermit.schoolYear || prev.schoolYear,
+          permitLevels: primaryPermit.permitLevels,
+          shsStrands: primaryPermit.shsStrands ?? prev.shsStrands,
           logicType: 'ocr',
           permitUrl,
-          governmentPermits: deduped,
+          governmentPermits: mergedHistory,
         };
       });
+
+      setActivePermitIndex(0);
 
       setIsProcessing(false);
     } catch (error) {

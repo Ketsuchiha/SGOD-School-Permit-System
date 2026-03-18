@@ -131,6 +131,7 @@ class ReportSchoolRecord(BaseModel):
 class PermitReportRequest(BaseModel):
     schoolYear: Optional[str] = None
     status: Optional[str] = None
+    permitLevel: Optional[str] = None
     schools: list[ReportSchoolRecord] = []
 
 
@@ -549,14 +550,17 @@ async def geocode(request: GeocodeRequest):
             if -90 <= lat <= 90 and -180 <= lng <= 180:
                 return {"lat": lat, "lng": lng}
 
+        normalized_address = re.sub(r"\s+", " ", address).strip()
         queries = []
         if name and address:
-            queries.append(f"{name}, {address}, Cabuyao City, Laguna, Philippines")
-            queries.append(f"{name}, {address}, Laguna, Philippines")
+            queries.append(f"{name}, {normalized_address}, Cabuyao City, Laguna, Philippines")
+            queries.append(f"{name}, {normalized_address}, Cabuyao, Laguna, Philippines")
+            queries.append(f"{name}, {normalized_address}, Laguna, Philippines")
         if address:
-            queries.append(f"{address}, Cabuyao City, Laguna, Philippines")
-            queries.append(f"{address}, Laguna, Philippines")
-            queries.append(address)
+            queries.append(f"{normalized_address}, Cabuyao City, Laguna, Philippines")
+            queries.append(f"{normalized_address}, Cabuyao, Laguna, Philippines")
+            queries.append(f"{normalized_address}, Laguna, Philippines")
+            queries.append(normalized_address)
         if name:
             queries.append(f"{name}, Cabuyao City, Laguna, Philippines")
             queries.append(f"{name}, Laguna, Philippines")
@@ -569,18 +573,65 @@ async def geocode(request: GeocodeRequest):
                 deduped_queries.append(q)
                 seen.add(key)
 
-        location = None
+        def score_location(query_text: str, found_address: str) -> int:
+            score = 0
+            found = (found_address or "").lower()
+            query = (query_text or "").lower()
+
+            if "cabuyao" in found:
+                score += 10
+            if "laguna" in found:
+                score += 8
+            if "philippines" in found:
+                score += 3
+
+            if name and name.lower() in found:
+                score += 6
+
+            tokens = [token for token in re.split(r"[^a-z0-9]+", query) if len(token) >= 4]
+            overlap = sum(1 for token in tokens if token in found)
+            score += min(overlap, 8)
+
+            return score
+
+        best_location = None
+        best_score = -1
+        laguna_viewbox = [(121.00, 14.42), (121.24, 14.17)]
+
         for query in deduped_queries:
             try:
-                location = geolocator.geocode(query, timeout=12, exactly_one=True, country_codes="ph")
+                location = geolocator.geocode(
+                    query,
+                    timeout=12,
+                    exactly_one=True,
+                    country_codes="ph",
+                    viewbox=laguna_viewbox,
+                    bounded=False,
+                    addressdetails=True,
+                )
             except Exception:
                 location = None
-            if location:
+
+            if not location:
+                continue
+
+            found_address = getattr(location, "address", "") or ""
+            found_lat = float(location.latitude)
+            found_lng = float(location.longitude)
+            if not (4 <= found_lat <= 22 and 116 <= found_lng <= 127):
+                continue
+
+            score = score_location(query, found_address)
+            if score > best_score:
+                best_score = score
+                best_location = location
+
+            if "cabuyao" in found_address.lower() and score >= 18:
                 break
 
-        if not location:
+        if not best_location:
             raise HTTPException(status_code=404, detail="Address not found")
-        return {"lat": location.latitude, "lng": location.longitude}
+        return {"lat": best_location.latitude, "lng": best_location.longitude}
     except ImportError:
         raise HTTPException(status_code=503, detail="Geocoding service unavailable")
     except HTTPException:
@@ -607,20 +658,35 @@ async def get_permit_report(
 async def create_permit_report(payload: PermitReportRequest):
     try:
         from openpyxl import Workbook
+        from collections import defaultdict
 
-        def level_text(levels: Optional[ReportPermitLevels]) -> str:
+        def normalize_levels(levels: Optional[dict]) -> dict:
+            source = levels or {}
+            return {
+                "kindergarten": bool(source.get("kindergarten")),
+                "elementary": bool(source.get("elementary")),
+                "highSchool": bool(source.get("highSchool")),
+                "seniorHighSchool": bool(source.get("seniorHighSchool")),
+            }
+
+        def level_text(levels: dict) -> str:
             if not levels:
                 return ""
             tags = []
-            if levels.kindergarten:
+            if levels.get("kindergarten"):
                 tags.append("Kindergarten")
-            if levels.elementary:
+            if levels.get("elementary"):
                 tags.append("Elementary")
-            if levels.highSchool:
+            if levels.get("highSchool"):
                 tags.append("Junior High School")
-            if levels.seniorHighSchool:
+            if levels.get("seniorHighSchool"):
                 tags.append("Senior High School")
             return ", ".join(tags)
+
+        def permit_matches_level(levels: dict, selected_level: str) -> bool:
+            if not selected_level or selected_level == "all":
+                return True
+            return bool(levels.get(selected_level, False))
 
         wb = Workbook()
         # Remove the default empty sheet created by openpyxl
@@ -628,7 +694,8 @@ async def create_permit_report(payload: PermitReportRequest):
 
         selected_year = (payload.schoolYear or "").strip()
         selected_status = (payload.status or "").strip().lower()
-        headers = ["School Name", "School Address", "Government Permit", "Year Level"]
+        selected_level = (payload.permitLevel or "all").strip()
+        headers = ["School Name", "School Address", "Government Permit", "School Year", "Year Level", "Status"]
 
         def get_permit_number(school: ReportSchoolRecord) -> str:
             num = (school.permitNumber or "").strip()
@@ -656,38 +723,108 @@ async def create_permit_report(payload: PermitReportRequest):
                 continue
             filtered.append(school)
 
+        report_rows: list[dict] = []
+        for school in filtered:
+            permit_history = school.governmentPermits or []
+            permit_levels_obj = school.permitLevels
+            if permit_levels_obj is None:
+                permit_levels_data = None
+            elif hasattr(permit_levels_obj, "model_dump"):
+                permit_levels_data = permit_levels_obj.model_dump()
+            elif hasattr(permit_levels_obj, "dict"):
+                permit_levels_data = permit_levels_obj.dict()
+            else:
+                permit_levels_data = None
+
+            fallback_levels = normalize_levels(permit_levels_data)
+            fallback_permit = {
+                "permitNumber": (school.permitNumber or "").strip(),
+                "schoolYear": (school.schoolYear or "").strip(),
+                "permitLevels": fallback_levels,
+            }
+
+            has_fallback_data = bool(
+                fallback_permit["permitNumber"]
+                or fallback_permit["schoolYear"]
+                or any(fallback_levels.values())
+            )
+
+            merged_permits = []
+            for permit in permit_history:
+                if not isinstance(permit, dict):
+                    continue
+
+                raw_levels = permit.get("permitLevels", {})
+                normalized = {
+                    "permitNumber": str(permit.get("permitNumber", "")).strip(),
+                    "schoolYear": str(permit.get("schoolYear", "")).strip(),
+                    "permitLevels": normalize_levels(raw_levels if isinstance(raw_levels, dict) else {}),
+                }
+                merged_permits.append(normalized)
+
+            fallback_duplicate = any(
+                (p.get("permitNumber", "").strip().lower() == fallback_permit["permitNumber"].lower())
+                and (p.get("schoolYear", "").strip() == fallback_permit["schoolYear"])
+                for p in merged_permits
+            )
+
+            if has_fallback_data and not fallback_duplicate:
+                merged_permits.append(fallback_permit)
+
+            if not merged_permits:
+                merged_permits.append(fallback_permit)
+
+            for permit in merged_permits:
+                permit_year = (permit.get("schoolYear", "") or "").strip()
+                permit_levels = permit.get("permitLevels", {})
+
+                if selected_year and permit_year != selected_year:
+                    continue
+                if not permit_matches_level(permit_levels, selected_level):
+                    continue
+
+                report_rows.append({
+                    "school_name": (school.name or "").strip(),
+                    "school_address": (school.address or "").strip(),
+                    "permit_number": (permit.get("permitNumber") or "").strip() or get_permit_number(school),
+                    "school_year": permit_year,
+                    "year_level": level_text(permit_levels),
+                    "status": (school.status or "").strip(),
+                })
+
         if selected_year:
             # Single worksheet for a specific school year
             ws = wb.create_sheet(title=selected_year[:31])
             ws.append(headers)
-            for school in filtered:
-                if (school.schoolYear or "").strip() != selected_year:
-                    continue
+            for row in report_rows:
                 ws.append([
-                    (school.name or "").strip(),
-                    (school.address or "").strip(),
-                    get_permit_number(school),
-                    level_text(school.permitLevels),
+                    row["school_name"],
+                    row["school_address"],
+                    row["permit_number"],
+                    row["school_year"],
+                    row["year_level"],
+                    row["status"],
                 ])
             auto_size(ws)
         else:
             # One worksheet per school year, sorted; "No Year" sheet for blanks
-            from collections import defaultdict
             year_buckets: dict = defaultdict(list)
-            for school in filtered:
-                yr = (school.schoolYear or "").strip() or "No Year"
-                year_buckets[yr].append(school)
+            for row in report_rows:
+                yr = row["school_year"] or "No Year"
+                year_buckets[yr].append(row)
 
             for yr in sorted(year_buckets.keys()):
                 sheet_title = yr[:31]
                 ws = wb.create_sheet(title=sheet_title)
                 ws.append(headers)
-                for school in year_buckets[yr]:
+                for row in year_buckets[yr]:
                     ws.append([
-                        (school.name or "").strip(),
-                        (school.address or "").strip(),
-                        get_permit_number(school),
-                        level_text(school.permitLevels),
+                        row["school_name"],
+                        row["school_address"],
+                        row["permit_number"],
+                        row["school_year"],
+                        row["year_level"],
+                        row["status"],
                     ])
                 auto_size(ws)
 

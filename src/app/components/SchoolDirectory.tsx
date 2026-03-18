@@ -5,6 +5,35 @@ import { useNavigate } from 'react-router-dom';
 import { useSchools } from '../contexts/SchoolContext';
 import { Sidebar } from './Sidebar';
 import { SchoolDetailsView } from './SchoolDetailsView';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+
+type PermitLevelFilter = 'all' | 'kindergarten' | 'elementary' | 'highSchool' | 'seniorHighSchool';
+
+const schoolHasPermitLevel = (school: School, level: PermitLevelFilter) => {
+  if (level === 'all') {
+    return true;
+  }
+
+  const permitHistory = school.governmentPermits || [];
+  if (permitHistory.length > 0) {
+    return permitHistory.some((permit) => Boolean(permit?.permitLevels?.[level]));
+  }
+
+  return Boolean(school.permitLevels?.[level]);
+};
+
+const schoolMatchesYear = (school: School, year: string) => {
+  if (!year) {
+    return true;
+  }
+
+  const permitHistory = school.governmentPermits || [];
+  if (permitHistory.length > 0) {
+    return permitHistory.some((permit) => (permit?.schoolYear || '').trim() === year);
+  }
+
+  return (school.schoolYear || '').trim() === year;
+};
 
 export function SchoolDirectory() {
   const navigate = useNavigate();
@@ -12,11 +41,34 @@ export function SchoolDirectory() {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSchool, setSelectedSchool] = useState<School | null>(null);
+  const [schoolYearFilter, setSchoolYearFilter] = useState('');
+  const [permitLevelFilter, setPermitLevelFilter] = useState<PermitLevelFilter>('all');
+
+  const availableSchoolYears = Array.from(
+    new Set(
+      activeSchools.flatMap((school: School) => {
+        const years = [school.schoolYear].filter(Boolean) as string[];
+        (school.governmentPermits || []).forEach((permit) => {
+          if (permit.schoolYear) {
+            years.push(permit.schoolYear);
+          }
+        });
+        return years;
+      })
+    )
+  ).sort();
 
   const filteredSchools = activeSchools.filter((school: School) =>
-    school.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    school.barangay.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    school.permitNumber.toLowerCase().includes(searchQuery.toLowerCase())
+    (
+      school.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      school.barangay.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      school.permitNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (school.governmentPermits || []).some((permit) =>
+        (permit.permitNumber || '').toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    )
+    && schoolMatchesYear(school, schoolYearFilter)
+    && schoolHasPermitLevel(school, permitLevelFilter)
   );
 
   return (
@@ -38,7 +90,7 @@ export function SchoolDirectory() {
       </div>
 
       {/* Controls */}
-      <div className="mb-6 flex items-center gap-4">
+      <div className="mb-6 grid grid-cols-1 lg:grid-cols-4 gap-4">
         <div className="flex-1 relative">
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
           <input
@@ -49,6 +101,37 @@ export function SchoolDirectory() {
             className="w-full bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl pl-12 pr-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
           />
         </div>
+
+        <Select
+          value={schoolYearFilter || 'all-years'}
+          onValueChange={(value) => setSchoolYearFilter(value === 'all-years' ? '' : value)}
+        >
+          <SelectTrigger aria-label="School Year Filter" className="w-full">
+            <SelectValue placeholder="All School Years" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all-years">All School Years</SelectItem>
+            {availableSchoolYears.map((year) => (
+              <SelectItem key={year} value={year}>{year}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={permitLevelFilter}
+          onValueChange={(value) => setPermitLevelFilter(value as PermitLevelFilter)}
+        >
+          <SelectTrigger aria-label="Permit Level Filter" className="w-full">
+            <SelectValue placeholder="All Permit Levels" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Permit Levels</SelectItem>
+            <SelectItem value="kindergarten">Kindergarten</SelectItem>
+            <SelectItem value="elementary">Elementary</SelectItem>
+            <SelectItem value="highSchool">Junior High School</SelectItem>
+            <SelectItem value="seniorHighSchool">Senior High School</SelectItem>
+          </SelectContent>
+        </Select>
 
         <div className="flex items-center gap-2 bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl p-1">
           <button

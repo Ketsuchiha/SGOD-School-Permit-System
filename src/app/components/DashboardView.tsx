@@ -23,6 +23,7 @@ export function DashboardView() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [reportSchoolYear, setReportSchoolYear] = useState('');
   const [reportStatus, setReportStatus] = useState<'all' | 'operational' | 'renewal' | 'not-operational'>('all');
+  const [reportPermitLevel, setReportPermitLevel] = useState<'all' | 'kindergarten' | 'elementary' | 'highSchool' | 'seniorHighSchool'>('all');
   const [isExporting, setIsExporting] = useState(false);
 
   const schoolHasPermitLevel = (school: School, level: keyof School['permitLevels']) => {
@@ -40,7 +41,21 @@ export function DashboardView() {
   const seniorHighSchoolPermits = activeSchools.filter((school: School) => schoolHasPermitLevel(school, 'seniorHighSchool')).length;
 
   const availableSchoolYears = useMemo(() => {
-    return Array.from(new Set(activeSchools.map((school: School) => school.schoolYear))).sort();
+    const years = new Set<string>();
+
+    activeSchools.forEach((school: School) => {
+      if (school.schoolYear) {
+        years.add(school.schoolYear);
+      }
+
+      (school.governmentPermits ?? []).forEach((permit) => {
+        if (permit.schoolYear) {
+          years.add(permit.schoolYear);
+        }
+      });
+    });
+
+    return Array.from(years).sort();
   }, [activeSchools]);
 
   const handleUpdateSchool = (updatedSchool: School) => {
@@ -87,6 +102,7 @@ export function DashboardView() {
         body: JSON.stringify({
           schoolYear: reportSchoolYear || null,
           status: reportStatus,
+          permitLevel: reportPermitLevel,
           schools: activeSchools,
         }),
       });
@@ -101,15 +117,16 @@ export function DashboardView() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
+      const levelSuffix = reportPermitLevel === 'all' ? 'all-levels' : reportPermitLevel;
       link.download = reportSchoolYear
-        ? `school-permit-report-${reportSchoolYear}.xlsx`
-        : 'school-permit-report-all-years.xlsx';
+        ? `school-permit-report-${reportSchoolYear}-${levelSuffix}.xlsx`
+        : `school-permit-report-all-years-${levelSuffix}.xlsx`;
       document.body.appendChild(link);
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
 
-      addNotification('Export Complete', `Excel report downloaded successfully. ${activeSchools.length} schools included.`);
+      addNotification('Export Complete', `Excel report downloaded successfully with selected filters.`);
     } catch (error) {
       addNotification('Export Error', 'Failed to download Excel report.');
     } finally {
@@ -171,7 +188,7 @@ export function DashboardView() {
           />
         </div>
 
-        <div className="mb-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="mb-8 grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
             <label htmlFor="reportSchoolYear" className="text-xs text-slate-400 mb-2 block">Report School Year</label>
             <Select
@@ -200,6 +217,21 @@ export function DashboardView() {
                 <SelectItem value="operational">Operational</SelectItem>
                 <SelectItem value="renewal">For Renewal</SelectItem>
                 <SelectItem value="not-operational">Not Operational</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <label htmlFor="reportPermitLevel" className="text-xs text-slate-400 mb-2 block">Permit Level</label>
+            <Select value={reportPermitLevel} onValueChange={(value) => setReportPermitLevel(value as typeof reportPermitLevel)}>
+              <SelectTrigger id="reportPermitLevel" aria-label="Report Permit Level" className="w-full">
+                <SelectValue placeholder="All Permit Levels" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Permit Levels</SelectItem>
+                <SelectItem value="kindergarten">Kindergarten</SelectItem>
+                <SelectItem value="elementary">Elementary</SelectItem>
+                <SelectItem value="highSchool">Junior High School</SelectItem>
+                <SelectItem value="seniorHighSchool">Senior High School</SelectItem>
               </SelectContent>
             </Select>
           </div>

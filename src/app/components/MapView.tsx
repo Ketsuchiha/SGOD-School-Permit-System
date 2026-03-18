@@ -1,12 +1,111 @@
 import { useMemo, useState } from 'react';
 import { School, getStatusColor, getStatusLabel } from '../data/mockData';
 import { MapPin, Navigation, Search, ArrowLeft } from 'lucide-react';
-import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet';
 import { useNavigate } from 'react-router-dom';
 import { useSchools } from '../contexts/SchoolContext';
 import { Sidebar } from './Sidebar';
 import { SchoolDetailModal } from './SchoolDetailModal';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import type { LatLngBoundsExpression } from 'leaflet';
+
+const CABUYAO_CENTER: [number, number] = [14.2722, 121.1239];
+
+type PlottedSchool = {
+  school: School;
+  lat: number;
+  lng: number;
+};
+
+const toFiniteNumber = (value: unknown): number | null => {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const isWithinPhilippinesBounds = (lat: number, lng: number) => {
+  return lat >= 4 && lat <= 22 && lng >= 116 && lng <= 127;
+};
+
+const stableHash = (value: string) => {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = ((hash << 5) - hash) + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+};
+
+const buildPlottedSchools = (schools: School[]): PlottedSchool[] => {
+  const base = schools.map((school) => {
+    const lat = toFiniteNumber(school.lat);
+    const lng = toFiniteNumber(school.lng);
+
+    if (lat !== null && lng !== null && isWithinPhilippinesBounds(lat, lng)) {
+      return { school, lat, lng };
+    }
+
+    const hash = stableHash(school.id || school.name || 'school');
+    const offsetLat = ((hash % 13) - 6) * 0.00006;
+    const offsetLng = (((Math.floor(hash / 13)) % 13) - 6) * 0.00006;
+
+    return {
+      school,
+      lat: CABUYAO_CENTER[0] + offsetLat,
+      lng: CABUYAO_CENTER[1] + offsetLng,
+    };
+  });
+
+  const grouped = new Map<string, PlottedSchool[]>();
+  base.forEach((entry) => {
+    const key = `${entry.lat.toFixed(6)},${entry.lng.toFixed(6)}`;
+    const bucket = grouped.get(key) ?? [];
+    bucket.push(entry);
+    grouped.set(key, bucket);
+  });
+
+  const spread: PlottedSchool[] = [];
+  grouped.forEach((bucket) => {
+    if (bucket.length === 1) {
+      spread.push(bucket[0]);
+      return;
+    }
+
+    const radius = 0.00014;
+    bucket.forEach((entry, index) => {
+      const angle = (index / bucket.length) * Math.PI * 2;
+      spread.push({
+        ...entry,
+        lat: entry.lat + Math.sin(angle) * radius,
+        lng: entry.lng + Math.cos(angle) * radius,
+      });
+    });
+  });
+
+  return spread;
+};
+
+function MapControls({ bounds }: { bounds: LatLngBoundsExpression | null }) {
+  const map = useMap();
+
+  return (
+    <div className="absolute top-4 right-4 flex flex-col gap-2 z-[1000]">
+      <button
+        type="button"
+        aria-label="Reset View"
+        onClick={() => {
+          if (bounds) {
+            map.fitBounds(bounds, { padding: [30, 30] });
+          } else {
+            map.setView(CABUYAO_CENTER, 12);
+          }
+        }}
+        className="w-10 h-10 bg-slate-900/90 backdrop-blur-sm rounded-lg flex items-center justify-center hover:bg-slate-800 transition-colors"
+      >
+        <Navigation className="w-5 h-5 text-white" />
+      </button>
+    </div>
+  );
+}
 
 export function MapView() {
   const navigate = useNavigate();
@@ -42,6 +141,19 @@ export function MapView() {
     );
   }, [activeSchools, filter, searchQuery]);
 
+  const plottedSchools = useMemo(() => buildPlottedSchools(filteredSchools), [filteredSchools]);
+  const plottedById = useMemo(() => {
+    const map = new Map<string, PlottedSchool>();
+    plottedSchools.forEach((entry) => map.set(entry.school.id, entry));
+    return map;
+  }, [plottedSchools]);
+  const bounds = useMemo<LatLngBoundsExpression | null>(() => {
+    if (plottedSchools.length === 0) {
+      return null;
+    }
+    return plottedSchools.map((entry) => [entry.lat, entry.lng] as [number, number]);
+  }, [plottedSchools]);
+
   return (
     <div className="flex">
       <Sidebar />
@@ -58,6 +170,7 @@ export function MapView() {
         </button>
         <h1 className="text-3xl font-bold text-white mb-2">Interactive School Map</h1>
         <p className="text-slate-400">Geographic view of all registered schools</p>
+        <p className="text-xs text-slate-500 mt-1">Pins shown: {plottedSchools.length} / {filteredSchools.length} filtered schools</p>
       </div>
 
       {/* Controls Bar */}
@@ -93,21 +206,28 @@ export function MapView() {
         <div className="lg:col-span-2">
           <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl overflow-hidden shadow-2xl">
             <div className="relative h-[600px] overflow-hidden">
-              <MapContainer center={[14.2722, 121.1239]} zoom={12} className="h-[600px] w-full">
+              <MapContainer center={CABUYAO_CENTER} zoom={12} className="h-[600px] w-full">
                 <TileLayer
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                   attribution="&copy; OpenStreetMap contributors"
                 />
-                {filteredSchools.map((school) => {
+                {plottedSchools.map((entry) => {
+                  const school = entry.school;
                   const isSelected = selectedSchool?.id === school.id;
                   const color = statusColor(school.status);
 
-                  return (
+                  return [
                     <CircleMarker
-                      key={school.id}
-                      center={[school.lat, school.lng]}
-                      radius={isSelected ? 11 : 8}
-                      pathOptions={{ color, fillColor: color, fillOpacity: 0.9 }}
+                      key={`${school.id}-glow`}
+                      center={[entry.lat, entry.lng]}
+                      radius={isSelected ? 20 : 15}
+                      pathOptions={{ color, fillColor: color, fillOpacity: isSelected ? 0.3 : 0.2, weight: 0 }}
+                    />,
+                    <CircleMarker
+                      key={`${school.id}-pin`}
+                      center={[entry.lat, entry.lng]}
+                      radius={isSelected ? 10 : 8}
+                      pathOptions={{ color, fillColor: color, fillOpacity: 0.95, weight: isSelected ? 3 : 2 }}
                       eventHandlers={{ click: () => setSelectedSchool(school) }}
                     >
                       <Popup>
@@ -124,19 +244,11 @@ export function MapView() {
                           </span>
                         </div>
                       </Popup>
-                    </CircleMarker>
-                  );
+                    </CircleMarker>,
+                  ];
                 })}
+                <MapControls bounds={bounds} />
               </MapContainer>
-              <div className="absolute top-4 right-4 flex flex-col gap-2 z-[1000]">
-                <button 
-                  type="button"
-                  aria-label="Reset View"
-                  className="w-10 h-10 bg-slate-900/90 backdrop-blur-sm rounded-lg flex items-center justify-center hover:bg-slate-800 transition-colors"
-                >
-                  <Navigation className="w-5 h-5 text-white" />
-                </button>
-              </div>
             </div>
           </div>
         </div>
@@ -164,6 +276,19 @@ export function MapView() {
                   <div>
                     <label className="text-xs text-slate-400">Address</label>
                     <div className="text-white mt-1">{selectedSchool.address || 'No address recorded'}</div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-slate-400">Coordinates</label>
+                    <div className="text-white mt-1 font-mono text-xs">
+                      {(() => {
+                        const plotted = plottedById.get(selectedSchool.id);
+                        if (!plotted) {
+                          return `${selectedSchool.lat.toFixed(6)}, ${selectedSchool.lng.toFixed(6)}`;
+                        }
+                        return `${plotted.lat.toFixed(6)}, ${plotted.lng.toFixed(6)}`;
+                      })()}
+                    </div>
                   </div>
 
                 </div>
