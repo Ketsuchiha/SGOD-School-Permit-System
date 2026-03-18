@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useMemo, useState } from 'react';
 import { School, getStatusColor, getStatusLabel } from '../data/mockData';
 import { MapPin, Navigation, Search, ArrowLeft } from 'lucide-react';
 import { MapContainer, TileLayer, CircleMarker, Popup } from 'react-leaflet';
@@ -8,46 +8,9 @@ import { Sidebar } from './Sidebar';
 import { SchoolDetailModal } from './SchoolDetailModal';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
-const apiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
-
 export function MapView() {
   const navigate = useNavigate();
-  const { activeSchools, setSchools } = useSchools();
-  const geocodedRef = useRef(false);
-
-  // Re-geocode all schools on mount using name+address for accuracy
-  useEffect(() => {
-    if (geocodedRef.current || activeSchools.length === 0) return;
-    geocodedRef.current = true;
-
-    const schoolsToGeocode = activeSchools.filter((s: School) => s.address?.trim());
-    if (schoolsToGeocode.length === 0) return;
-
-    let cancelled = false;
-    (async () => {
-      for (const school of schoolsToGeocode) {
-        if (cancelled) break;
-        try {
-          const res = await fetch(`${apiBaseUrl}/api/geocode`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: school.name, address: school.address }),
-          });
-          if (!res.ok) continue;
-          const { lat, lng } = await res.json();
-          setSchools((prev: School[]) =>
-            prev.map((s: School) => s.id === school.id ? { ...s, lat, lng } : s)
-          );
-          // Nominatim rate limit: 1 req/sec
-          await new Promise((r) => setTimeout(r, 1100));
-        } catch {
-          // skip network errors
-        }
-      }
-    })();
-
-    return () => { cancelled = true; };
-  }, [activeSchools.length]);
+  const { activeSchools } = useSchools();
   const [selectedSchool, setSelectedSchool] = useState<School | null>(null);
   const [filter, setFilter] = useState<'all' | 'operational' | 'renewal' | 'not-operational'>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -148,9 +111,18 @@ export function MapView() {
                       eventHandlers={{ click: () => setSelectedSchool(school) }}
                     >
                       <Popup>
-                        <div className="text-sm font-semibold">{school.name}</div>
-                        <div className="text-xs">{school.permitNumber}</div>
-                        <div className="text-xs">{school.address}</div>
+                        <div className="text-sm font-semibold text-slate-900">{school.name}</div>
+                        <div className="text-xs text-slate-600">{school.permitNumber}</div>
+                        <div className="text-xs text-slate-600 mb-2">{school.address}</div>
+                        <div className="text-xs">
+                          <span className={`inline-flex items-center px-2 py-1 rounded text-xs font-medium ${
+                            school.status === 'operational' ? 'bg-emerald-100 text-emerald-800' :
+                            school.status === 'renewal' ? 'bg-amber-100 text-amber-800' :
+                            'bg-rose-100 text-rose-800'
+                          }`}>
+                            {getStatusLabel(school.status)}
+                          </span>
+                        </div>
                       </Popup>
                     </CircleMarker>
                   );

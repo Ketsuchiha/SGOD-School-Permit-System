@@ -54,6 +54,9 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
   const [ocrDiagnostics, setOcrDiagnostics] = useState<OCRDiagnostics | null>(null);
   const [showLocationPicker, setShowLocationPicker] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // Existing records should keep their saved coordinates unless user requests geocode.
+  const [manualCoordinates, setManualCoordinates] = useState(Boolean(school));
+  const [activePermitIndex, setActivePermitIndex] = useState(0);
 
   const hasAnyPermitLevel = (levels?: GovernmentPermit['permitLevels']) => {
     if (!levels) return false;
@@ -68,15 +71,74 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     return `${start}-${start + 1}`;
   };
 
+  const createPermitFromSchool = (source: School): GovernmentPermit => ({
+    permitNumber: source.permitNumber || '',
+    schoolYear: source.schoolYear || inferSchoolYearFromPermitNumber(source.permitNumber),
+    issueDate: source.issueDate,
+    permitLevels: source.permitLevels || { kindergarten: false, elementary: false, highSchool: false, seniorHighSchool: false },
+    shsStrands: source.shsStrands || [],
+  });
+
+  const getPermitList = (source: School): GovernmentPermit[] => {
+    if (source.governmentPermits && source.governmentPermits.length > 0) {
+      return source.governmentPermits;
+    }
+    return [createPermitFromSchool(source)];
+  };
+
+  const syncPrimaryPermit = (source: School, permits: GovernmentPermit[]): School => {
+    const primaryPermit = permits[0] || createPermitFromSchool(source);
+    return {
+      ...source,
+      governmentPermits: permits,
+      permitNumber: primaryPermit.permitNumber || source.permitNumber,
+      schoolYear: primaryPermit.schoolYear || source.schoolYear,
+      issueDate: primaryPermit.issueDate || source.issueDate,
+      permitLevels: primaryPermit.permitLevels || source.permitLevels,
+      shsStrands: primaryPermit.shsStrands || source.shsStrands,
+    };
+  };
+
+  const updatePermitAt = (index: number, updater: (permit: GovernmentPermit) => GovernmentPermit) => {
+    setEditedSchool((prev: School) => {
+      const permits = getPermitList(prev).map((permit) => ({
+        ...permit,
+        permitLevels: { ...permit.permitLevels },
+        shsStrands: [...(permit.shsStrands || [])],
+      }));
+
+      const targetPermit = permits[index] || createPermitFromSchool(prev);
+      permits[index] = updater(targetPermit);
+
+      return syncPrimaryPermit(prev, permits);
+    });
+  };
+
+  const removePermitAt = (index: number) => {
+    setEditedSchool((prev: School) => {
+      const nextPermits = getPermitList(prev).filter((_, permitIndex) => permitIndex !== index);
+      const normalized = nextPermits.length > 0 ? nextPermits : [createPermitFromSchool(prev)];
+      return syncPrimaryPermit(prev, normalized);
+    });
+
+    setActivePermitIndex((prev) => {
+      if (prev > index) return prev - 1;
+      if (prev === index) return Math.max(0, prev - 1);
+      return prev;
+    });
+  };
+
   const toggleStrand = (strand: SHSStrand) => {
-    const currentStrands = editedSchool.shsStrands || [];
-    const hasStrand = currentStrands.includes(strand);
-    
-    setEditedSchool({
-      ...editedSchool,
-      shsStrands: hasStrand 
-        ? currentStrands.filter((s: SHSStrand) => s !== strand)
-        : [...currentStrands, strand]
+    updatePermitAt(activePermitIndex, (permit) => {
+      const currentStrands = permit.shsStrands || [];
+      const hasStrand = currentStrands.includes(strand);
+
+      return {
+        ...permit,
+        shsStrands: hasStrand
+          ? currentStrands.filter((s: SHSStrand) => s !== strand)
+          : [...currentStrands, strand],
+      };
     });
   };
 
@@ -87,6 +149,16 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     });
     onClose();
   };
+
+  useEffect(() => {
+    setEditedSchool((prev: School) => {
+      if (prev.governmentPermits && prev.governmentPermits.length > 0) {
+        return prev;
+      }
+
+      return syncPrimaryPermit(prev, [createPermitFromSchool(prev)]);
+    });
+  }, []);
 
   const requestOcr = async (file: File): Promise<OCRPermitResult> => {
     const formData = new FormData();
@@ -122,7 +194,19 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     if (!editedSchool.address.trim()) return;
     const result = await requestGeocode(editedSchool.name.trim(), editedSchool.address.trim());
     if (!result) return;
+    setManualCoordinates(false);
     setEditedSchool((prev: School) => ({ ...prev, lat: result.lat, lng: result.lng }));
+  };
+
+  const handleCoordinateChange = (field: 'lat' | 'lng', value: string) => {
+    const parsed = Number.parseFloat(value);
+    if (Number.isNaN(parsed)) return;
+
+    setManualCoordinates(true);
+    setEditedSchool((prev: School) => ({
+      ...prev,
+      [field]: parsed,
+    }));
   };
 
   const handleDelete = () => {
@@ -206,6 +290,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
   };
 
   useEffect(() => {
+    if (manualCoordinates) return;
     if (!editedSchool.address.trim()) return;
     const timeout = setTimeout(() => {
       requestGeocode(editedSchool.name.trim(), editedSchool.address.trim()).then((result) => {
@@ -215,7 +300,11 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     }, 700);
 
     return () => clearTimeout(timeout);
-  }, [editedSchool.address, editedSchool.name]);
+  }, [editedSchool.address, editedSchool.name, manualCoordinates]);
+
+  const permitHistory = getPermitList(editedSchool);
+  const selectedPermitIndex = Math.min(activePermitIndex, Math.max(permitHistory.length - 1, 0));
+  const currentPermit = permitHistory[selectedPermitIndex] || createPermitFromSchool(editedSchool);
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -306,6 +395,26 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                       </button>
                     </div>
                     <div className="mt-2 text-xs text-slate-300">Coordinates: {editedSchool.lat.toFixed(6)}, {editedSchool.lng.toFixed(6)}</div>
+                    <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <input
+                        type="number"
+                        step="any"
+                        value={editedSchool.lat}
+                        onChange={(e) => handleCoordinateChange('lat', e.target.value)}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
+                        placeholder="Latitude"
+                        aria-label="Latitude"
+                      />
+                      <input
+                        type="number"
+                        step="any"
+                        value={editedSchool.lng}
+                        onChange={(e) => handleCoordinateChange('lng', e.target.value)}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
+                        placeholder="Longitude"
+                        aria-label="Longitude"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -321,8 +430,8 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                     <label className="text-xs text-slate-400 mb-2 block">Permit Number *</label>
                     <input
                       type="text"
-                      value={editedSchool.permitNumber}
-                      onChange={(e) => setEditedSchool({ ...editedSchool, permitNumber: e.target.value })}
+                      value={currentPermit.permitNumber}
+                      onChange={(e) => updatePermitAt(selectedPermitIndex, (permit) => ({ ...permit, permitNumber: e.target.value }))}
                       placeholder="SDO-CAB-YYYY-XXX"
                       className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-slate-500 font-mono focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
                     />
@@ -332,8 +441,8 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                     <label className="text-xs text-slate-400 mb-2 block">School Year *</label>
                     <input
                       type="text"
-                      value={editedSchool.schoolYear}
-                      onChange={(e) => setEditedSchool({ ...editedSchool, schoolYear: e.target.value })}
+                      value={currentPermit.schoolYear}
+                      onChange={(e) => updatePermitAt(selectedPermitIndex, (permit) => ({ ...permit, schoolYear: e.target.value }))}
                       placeholder="2024-2025"
                       className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
                     />
@@ -346,12 +455,12 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                       <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition-colors">
                         <input
                           type="checkbox"
-                          checked={editedSchool.permitLevels.kindergarten}
+                          checked={currentPermit.permitLevels.kindergarten}
                           aria-label="Kindergarten Permit"
-                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditedSchool({
-                            ...editedSchool,
-                            permitLevels: { ...editedSchool.permitLevels, kindergarten: e.target.checked }
-                          })}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updatePermitAt(selectedPermitIndex, (permit) => ({
+                            ...permit,
+                            permitLevels: { ...permit.permitLevels, kindergarten: e.target.checked },
+                          }))}
                           className="w-5 h-5 rounded border-white/20 text-[#0C4DA2] focus:ring-2 focus:ring-[#0C4DA2] bg-white/5"
                         />
                         <div className="flex-1">
@@ -363,12 +472,12 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                       <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition-colors">
                         <input
                           type="checkbox"
-                          checked={editedSchool.permitLevels.elementary}
+                          checked={currentPermit.permitLevels.elementary}
                           aria-label="Elementary Permit"
-                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditedSchool({
-                            ...editedSchool,
-                            permitLevels: { ...editedSchool.permitLevels, elementary: e.target.checked }
-                          })}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updatePermitAt(selectedPermitIndex, (permit) => ({
+                            ...permit,
+                            permitLevels: { ...permit.permitLevels, elementary: e.target.checked },
+                          }))}
                           className="w-5 h-5 rounded border-white/20 text-[#0C4DA2] focus:ring-2 focus:ring-[#0C4DA2] bg-white/5"
                         />
                         <div className="flex-1">
@@ -380,12 +489,12 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                       <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition-colors">
                         <input
                           type="checkbox"
-                          checked={editedSchool.permitLevels.highSchool}
+                          checked={currentPermit.permitLevels.highSchool}
                           aria-label="High School Permit"
-                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditedSchool({
-                            ...editedSchool,
-                            permitLevels: { ...editedSchool.permitLevels, highSchool: e.target.checked }
-                          })}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updatePermitAt(selectedPermitIndex, (permit) => ({
+                            ...permit,
+                            permitLevels: { ...permit.permitLevels, highSchool: e.target.checked },
+                          }))}
                           className="w-5 h-5 rounded border-white/20 text-[#0C4DA2] focus:ring-2 focus:ring-[#0C4DA2] bg-white/5"
                         />
                         <div className="flex-1">
@@ -397,12 +506,12 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                       <label className="flex items-center gap-3 p-3 bg-white/5 rounded-lg border border-white/10 cursor-pointer hover:bg-white/10 transition-colors">
                         <input
                           type="checkbox"
-                          checked={editedSchool.permitLevels.seniorHighSchool}
+                          checked={currentPermit.permitLevels.seniorHighSchool}
                           aria-label="Senior High School Permit"
-                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEditedSchool({
-                            ...editedSchool,
-                            permitLevels: { ...editedSchool.permitLevels, seniorHighSchool: e.target.checked }
-                          })}
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) => updatePermitAt(selectedPermitIndex, (permit) => ({
+                            ...permit,
+                            permitLevels: { ...permit.permitLevels, seniorHighSchool: e.target.checked },
+                          }))}
                           className="w-5 h-5 rounded border-white/20 text-[#0C4DA2] focus:ring-2 focus:ring-[#0C4DA2] bg-white/5"
                         />
                         <div className="flex-1">
@@ -414,7 +523,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                   </div>
 
                   {/* SHS Strands */}
-                  {editedSchool.permitLevels.seniorHighSchool && (
+                  {currentPermit.permitLevels.seniorHighSchool && (
                     <div>
                       <label className="text-xs text-slate-400 mb-3 block">Senior High School Strands *</label>
                       <div className="grid grid-cols-2 gap-3">
@@ -433,7 +542,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                             key={strand.value}
                             className={`
                               flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all
-                              ${(editedSchool.shsStrands || []).includes(strand.value as SHSStrand)
+                              ${(currentPermit.shsStrands || []).includes(strand.value as SHSStrand)
                                 ? 'bg-[#0C4DA2]/20 border-[#0C4DA2]/60 text-white'
                                 : 'bg-white/5 border-white/10 text-slate-300 hover:bg-white/10'
                               }
@@ -441,7 +550,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                           >
                             <input
                               type="checkbox"
-                              checked={(editedSchool.shsStrands || []).includes(strand.value as SHSStrand)}
+                              checked={(currentPermit.shsStrands || []).includes(strand.value as SHSStrand)}
                               aria-label={strand.label}
                               onChange={() => toggleStrand(strand.value as SHSStrand)}
                               className="w-4 h-4 rounded border-white/20 text-[#0C4DA2] focus:ring-2 focus:ring-[#0C4DA2] bg-white/5"
@@ -506,27 +615,43 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
               </div>
 
               {/* Permit History */}
-              {editedSchool.governmentPermits && editedSchool.governmentPermits.length > 0 && (
+              {permitHistory.length > 0 && (
                 <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl p-4">
                   <h3 className="text-white font-semibold mb-3 flex items-center gap-2 text-sm">
                     <FileText className="w-4 h-4" />
-                    Permit History ({editedSchool.governmentPermits.length})
+                    Permit History ({permitHistory.length})
                   </h3>
                   <div className="space-y-2">
-                    {editedSchool.governmentPermits.map((permit, idx) => (
-                      <div key={idx} className={`p-3 rounded-lg border ${idx === 0 ? 'bg-blue-500/10 border-blue-500/30' : 'bg-white/5 border-white/10'}`}>
+                    {permitHistory.map((permit, idx) => (
+                      <div key={idx} className={`p-3 rounded-lg border ${idx === selectedPermitIndex ? 'bg-indigo-500/15 border-indigo-400/40' : idx === 0 ? 'bg-blue-500/10 border-blue-500/30' : 'bg-white/5 border-white/10'}`}>
                         <div className="flex items-center justify-between gap-2">
                           <div>
                             <div className="text-white text-sm font-mono">{permit.permitNumber || '(no number)'}</div>
                             <div className="text-xs text-slate-400">{permit.schoolYear}</div>
                           </div>
-                          <div className="flex flex-wrap justify-end gap-1">
+                          <div className="flex flex-wrap justify-end gap-1 items-center">
                             {permit.permitLevels.kindergarten && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">K</span>}
                             {permit.permitLevels.elementary && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">E</span>}
                             {permit.permitLevels.highSchool && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">JHS</span>}
                             {permit.permitLevels.seniorHighSchool && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">SHS</span>}
+                            <button
+                              type="button"
+                              onClick={() => setActivePermitIndex(idx)}
+                              className={`ml-2 px-2 py-1 rounded text-xs border transition-colors ${idx === selectedPermitIndex ? 'bg-indigo-500/30 border-indigo-400/60 text-indigo-100' : 'bg-white/5 border-white/15 text-slate-200 hover:bg-white/10'}`}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removePermitAt(idx)}
+                              disabled={permitHistory.length === 1}
+                              className="px-2 py-1 rounded text-xs border bg-rose-500/15 border-rose-500/40 text-rose-200 hover:bg-rose-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Delete
+                            </button>
                           </div>
                         </div>
+                        {idx === selectedPermitIndex && <div className="mt-1 text-xs text-indigo-200">Editing this permit</div>}
                         {idx === 0 && <div className="mt-1 text-xs text-blue-300">● Current permit</div>}
                       </div>
                     ))}
@@ -615,6 +740,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
           initialLng={editedSchool.lng}
           onClose={() => setShowLocationPicker(false)}
           onConfirm={({ lat, lng }) => {
+            setManualCoordinates(true);
             setEditedSchool((prev: School) => ({ ...prev, lat, lng }));
             setShowLocationPicker(false);
           }}

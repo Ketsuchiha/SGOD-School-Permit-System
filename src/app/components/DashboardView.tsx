@@ -44,7 +44,9 @@ export function DashboardView() {
   }, [activeSchools]);
 
   const handleUpdateSchool = (updatedSchool: School) => {
-    setSchools(schools.map((s: School) => s.id === updatedSchool.id ? updatedSchool : s));
+    setSchools((prevSchools) =>
+      prevSchools.map((s: School) => (s.id === updatedSchool.id ? updatedSchool : s))
+    );
     setSelectedSchool(updatedSchool);
     addNotification('School Updated', `${updatedSchool.name} was updated successfully.`);
     addLog('update', `School "${updatedSchool.name}" updated.`);
@@ -62,7 +64,7 @@ export function DashboardView() {
   };
 
   const handleAddSchool = (newSchool: School) => {
-    setSchools([...schools, newSchool]);
+    setSchools((prevSchools) => [...prevSchools, newSchool]);
     addNotification('School Created', `${newSchool.name} was created successfully.`);
     addLog('create', `School "${newSchool.name}" created.`);
     setShowCreateForm(false);

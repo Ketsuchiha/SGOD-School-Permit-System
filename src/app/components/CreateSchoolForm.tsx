@@ -70,6 +70,7 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
   const [targetPageInput, setTargetPageInput] = useState<string>('');
   const [logoSrc, setLogoSrc] = useState<string>(import.meta.env?.VITE_DEPED_LOGO_URL ?? '/Deped_Logo.png');
   const [showLocationPicker, setShowLocationPicker] = useState(false);
+  const [manualCoordinates, setManualCoordinates] = useState(false);
   const storedFileRef = useRef<File | null>(null);
   
   const [newSchool, setNewSchool] = useState<School>({
@@ -336,10 +337,23 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
     if (!newSchool.address.trim()) return;
     const result = await requestGeocode(newSchool.name.trim(), newSchool.address.trim());
     if (!result) return;
+    setManualCoordinates(false);
     setNewSchool((prev: School) => ({ ...prev, lat: result.lat, lng: result.lng }));
   };
 
+  const handleCoordinateChange = (field: 'lat' | 'lng', value: string) => {
+    const parsed = Number.parseFloat(value);
+    if (Number.isNaN(parsed)) return;
+
+    setManualCoordinates(true);
+    setNewSchool((prev: School) => ({
+      ...prev,
+      [field]: parsed,
+    }));
+  };
+
   useEffect(() => {
+    if (manualCoordinates) return;
     if (!newSchool.address.trim()) return;
     const timeout = setTimeout(() => {
       requestGeocode(newSchool.name.trim(), newSchool.address.trim()).then((result) => {
@@ -349,7 +363,7 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
     }, 700);
 
     return () => clearTimeout(timeout);
-  }, [newSchool.address, newSchool.name]);
+  }, [newSchool.address, newSchool.name, manualCoordinates]);
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -558,6 +572,26 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
                       </button>
                     </div>
                     <div className="mt-2 text-xs text-slate-300">Coordinates: {newSchool.lat.toFixed(6)}, {newSchool.lng.toFixed(6)}</div>
+                    <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <input
+                        type="number"
+                        step="any"
+                        value={newSchool.lat}
+                        onChange={(e) => handleCoordinateChange('lat', e.target.value)}
+                        placeholder="Latitude"
+                        aria-label="Latitude"
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
+                      />
+                      <input
+                        type="number"
+                        step="any"
+                        value={newSchool.lng}
+                        onChange={(e) => handleCoordinateChange('lng', e.target.value)}
+                        placeholder="Longitude"
+                        aria-label="Longitude"
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -606,6 +640,7 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
                         initialLng={newSchool.lng}
                         onClose={() => setShowLocationPicker(false)}
                         onConfirm={({ lat, lng }) => {
+                          setManualCoordinates(true);
                           setNewSchool((prev: School) => ({ ...prev, lat, lng }));
                           setShowLocationPicker(false);
                         }}
