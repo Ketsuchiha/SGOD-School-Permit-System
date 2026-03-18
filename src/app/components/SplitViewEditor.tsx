@@ -5,6 +5,8 @@ import React from 'react';
 import { PDFViewer } from './PDFViewer';
 import { fileToDataUrl } from '../utils/fileDataUrl';
 import { LocationPickerModal } from './LocationPickerModal';
+import { ConfirmationModal } from './ConfirmationModal';
+import { useNotifications } from '../contexts/NotificationContext';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 interface SplitViewEditorProps {
@@ -17,6 +19,7 @@ interface SplitViewEditorProps {
 
 export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool = false }: SplitViewEditorProps) {
   const apiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
+  const { addNotification } = useNotifications();
   const fallbackLogo = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2NgYGBgAAAABQABDQottAAAAABJRU5ErkJggg==';
   const [logoSrc, setLogoSrc] = useState<string>(import.meta.env?.VITE_DEPED_LOGO_URL ?? '/Deped_Logo.png');
   const [editedSchool, setEditedSchool] = useState<School>(
@@ -50,6 +53,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
   const [ocrEngine, setOcrEngine] = useState<string>('none');
   const [ocrDiagnostics, setOcrDiagnostics] = useState<OCRDiagnostics | null>(null);
   const [showLocationPicker, setShowLocationPicker] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const hasAnyPermitLevel = (levels?: GovernmentPermit['permitLevels']) => {
     if (!levels) return false;
@@ -122,7 +126,13 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
   };
 
   const handleDelete = () => {
-    if (school && confirm('Are you sure you want to move this record to the trash?')) {
+    setShowDeleteConfirm(true);
+  };
+
+  const handleConfirmDelete = () => {
+    if (school) {
+      addNotification('School Record Deleted', `"${editedSchool.name}" has been moved to trash.`);
+      setShowDeleteConfirm(false);
       onDelete(school.id);
       onClose();
     }
@@ -610,6 +620,13 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
           }}
         />
       )}
+      <ConfirmationModal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={handleConfirmDelete}
+        title="Delete School Record"
+        message={`Are you sure you want to move "${editedSchool.name}" to the trash? This action cannot be undone.`}
+      />
     </div>
   );
 }

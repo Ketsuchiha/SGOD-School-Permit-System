@@ -4,12 +4,14 @@ import { Search, Grid, List, Building2, ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useSchools } from '../contexts/SchoolContext';
 import { Sidebar } from './Sidebar';
+import { SchoolDetailsView } from './SchoolDetailsView';
 
 export function SchoolDirectory() {
   const navigate = useNavigate();
   const { activeSchools } = useSchools();
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedSchool, setSelectedSchool] = useState<School | null>(null);
 
   const filteredSchools = activeSchools.filter((school: School) =>
     school.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -83,6 +85,7 @@ export function SchoolDirectory() {
           {filteredSchools.map((school) => (
             <div
               key={school.id}
+              onClick={() => setSelectedSchool(school)}
               className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-2xl overflow-hidden shadow-lg hover:shadow-2xl hover:-translate-y-1 transition-all cursor-pointer group"
             >
               {/* Card Header */}
@@ -139,6 +142,7 @@ export function SchoolDirectory() {
               {filteredSchools.map((school) => (
                 <tr
                   key={school.id}
+                  onClick={() => setSelectedSchool(school)}
                   className="border-b border-white/5 hover:bg-white/5 transition-colors cursor-pointer"
                 >
                   <td className="px-6 py-4">
@@ -170,6 +174,13 @@ export function SchoolDirectory() {
           <Building2 className="w-12 h-12 text-slate-600 mx-auto mb-4" />
           <p className="text-slate-400">No schools found matching your search</p>
         </div>
+      )}
+
+      {selectedSchool && (
+        <SchoolDetailsView
+          school={selectedSchool}
+          onClose={() => setSelectedSchool(null)}
+        />
       )}
       </div>
     </div>
