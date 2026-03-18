@@ -4,7 +4,7 @@ import { X, Save, MapPin, Building2, FileText, Home, Upload, Loader2, CheckCircl
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { PDFViewer } from './PDFViewer';
 import { useSchools } from '../contexts/SchoolContext';
-import { fileToDataUrl } from '../utils/fileDataUrl';
+import { useNotifications } from '../contexts/NotificationContext';
 import { LocationPickerModal } from './LocationPickerModal';
 
 interface CreateSchoolFormProps {
@@ -58,6 +58,7 @@ const inferNameFromFileName = (fileName: string) => {
 export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
   const apiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
   const { activeSchools } = useSchools();
+  const { addNotification } = useNotifications();
   const fallbackLogo = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2NgYGBgAAAABQABDQottAAAAABJRU5ErkJggg==';
   const [schoolType, setSchoolType] = useState<SchoolType>('regular');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -111,6 +112,22 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
     return response.json();
   };
 
+  const requestPermitUpload = async (file: File): Promise<{ url: string; storage: string; path: string }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${apiBaseUrl}/api/uploads/permit`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error('File upload failed');
+    }
+
+    return response.json();
+  };
+
   const requestGeocode = async (name: string, address: string) => {
     const response = await fetch(`${apiBaseUrl}/api/geocode`, {
       method: 'POST',
@@ -137,8 +154,16 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
     setOcrEngine('none');
     setOcrDiagnostics(null);
 
-    const permitUrl = await fileToDataUrl(file);
-    setNewSchool((prev) => ({ ...prev, permitUrl }));
+    let permitUrl = '';
+    try {
+      const uploadResult = await requestPermitUpload(file);
+      permitUrl = uploadResult.url;
+      setNewSchool((prev) => ({ ...prev, permitUrl }));
+    } catch {
+      setIsProcessing(false);
+      setUploadError('File upload failed. Please check backend storage settings and try again.');
+      return;
+    }
 
     try {
       const ocrResult = await requestOcr(file, page);
@@ -267,10 +292,11 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
 
   const handleSave = () => {
     if (schoolType === 'homeschool') {
+      const schoolName = pickText(newSchool.homeschoolProvider, newSchool.name);
       onSave({
         ...newSchool,
         schoolType,
-        name: pickText(newSchool.homeschoolProvider, newSchool.name),
+        name: schoolName,
         address: pickText(newSchool.address, ''),
         permitNumber: '',
         schoolYear: pickText(newSchool.homeschoolYearLevel, newSchool.schoolYear),
@@ -280,6 +306,7 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
         governmentPermits: [],
         logicType: 'manual',
       });
+      addNotification('Saving School', `Registering ${schoolName}...`);
       onClose();
       return;
     }
@@ -289,7 +316,7 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
       : [createEmptyPermit()];
     const primaryPermit = permits[0];
 
-    onSave({
+    const schoolData = {
       ...newSchool,
       schoolType: schoolType,
       permitNumber: primaryPermit.permitNumber,
@@ -298,7 +325,10 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
       permitLevels: primaryPermit.permitLevels,
       shsStrands: primaryPermit.shsStrands || [],
       governmentPermits: permits,
-    });
+    };
+
+    addNotification('Saving School', `Registering ${schoolData.name}...`);
+    onSave(schoolData);
     onClose();
   };
 

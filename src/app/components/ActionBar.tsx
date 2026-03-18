@@ -1,24 +1,39 @@
-import { FileSpreadsheet, Plus } from 'lucide-react';
+import { FileSpreadsheet, Plus, Loader2 } from 'lucide-react';
+import { BackupRestoreModal } from './BackupRestoreModal';
 
 interface ActionBarProps {
   onExport: () => void;
   onCreateSchool: () => void;
+  isExporting?: boolean;
 }
 
-export function ActionBar({ onExport, onCreateSchool }: ActionBarProps) {
+export function ActionBar({ onExport, onCreateSchool, isExporting = false }: ActionBarProps) {
   return (
     <div className="fixed bottom-8 right-8 flex items-center gap-4 z-30">
+      {/* Backup Button */}
+      <BackupRestoreModal />
+
       {/* Export Button */}
       <button
         onClick={onExport}
-        className="group relative bg-white/10 backdrop-blur-xl border border-white/20 text-white px-6 py-3 rounded-xl font-medium hover:bg-white/20 transition-all shadow-lg hover:shadow-2xl hover:-translate-y-1 flex items-center gap-2"
+        disabled={isExporting}
+        className="group relative bg-white/10 backdrop-blur-xl border border-white/20 text-white px-6 py-3 rounded-xl font-medium hover:bg-white/20 transition-all shadow-lg hover:shadow-2xl hover:-translate-y-1 flex items-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed"
       >
-        <FileSpreadsheet className="w-5 h-5" />
-        Export Excel
+        {isExporting ? (
+          <>
+            <Loader2 className="w-5 h-5 animate-spin" />
+            Exporting...
+          </>
+        ) : (
+          <>
+            <FileSpreadsheet className="w-5 h-5" />
+            Export Excel
+          </>
+        )}
         
         {/* Tooltip */}
         <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-slate-900/90 backdrop-blur-sm rounded-lg text-sm whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-          Download registry as Excel
+          {isExporting ? 'Generating report...' : 'Download registry as Excel'}
         </div>
       </button>
 

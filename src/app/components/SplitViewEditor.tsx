@@ -209,7 +209,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="w-full h-full max-w-[95vw] max-h-[95vh] bg-slate-900/95 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl flex flex-col">
+      <div className="w-full h-full max-w-[99vw] max-h-[99vh] bg-slate-900/95 backdrop-blur-xl border border-white/20 rounded-2xl shadow-2xl flex flex-col">
         {/* Header */}
         <div className="bg-gradient-to-r from-[#0C4DA2] to-blue-600 px-6 py-4 flex items-center justify-between rounded-t-2xl">
           <div className="flex items-center gap-3">
@@ -240,16 +240,16 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
 
         {/* Split View Content */}
         <div className="flex-1 flex overflow-hidden">
-          {/* Left: PDF Viewer (50%) */}
-          <div className="w-1/2 p-6 overflow-hidden">
+          {/* Left: PDF Viewer (35%) */}
+          <div className="w-[35%] p-4 overflow-hidden">
             <PDFViewer 
               permitUrl={editedSchool.permitUrl} 
               permitNumber={editedSchool.permitNumber || 'New Permit'}
             />
           </div>
 
-          {/* Right: Editable Form (50%) */}
-          <div className="w-1/2 p-6 overflow-y-auto">
+          {/* Right: Editable Form (65%) */}
+          <div className="w-[65%] p-4 overflow-y-auto">
             <div className="space-y-6">
               {/* School Information */}
               <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl p-6">

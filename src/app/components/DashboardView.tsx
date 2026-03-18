@@ -23,6 +23,7 @@ export function DashboardView() {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [reportSchoolYear, setReportSchoolYear] = useState('');
   const [reportStatus, setReportStatus] = useState<'all' | 'operational' | 'renewal' | 'not-operational'>('all');
+  const [isExporting, setIsExporting] = useState(false);
 
   const totalSchools = activeSchools.length;
   const kindergartenPermits = activeSchools.filter((s: School) => s.permitLevels.kindergarten).length;
@@ -37,6 +38,8 @@ export function DashboardView() {
   const handleUpdateSchool = (updatedSchool: School) => {
     setSchools(schools.map((s: School) => s.id === updatedSchool.id ? updatedSchool : s));
     setSelectedSchool(updatedSchool);
+    addNotification('School Updated', `${updatedSchool.name} was updated successfully.`);
+    addLog('update', `School "${updatedSchool.name}" updated.`);
   };
 
   const handleDeleteSchool = (id: string) => {
@@ -64,34 +67,44 @@ export function DashboardView() {
   };
 
   const handleExport = async () => {
-    const response = await fetch(`${apiBaseUrl}/api/reports/permits`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        schoolYear: reportSchoolYear || null,
-        status: reportStatus,
-        schools: activeSchools,
-      }),
-    });
+    setIsExporting(true);
+    addNotification('Preparing Export', 'Generating Excel report...');
+    
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/reports/permits`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schoolYear: reportSchoolYear || null,
+          status: reportStatus,
+          schools: activeSchools,
+        }),
+      });
 
-    if (!response.ok) {
-      addNotification('Export Failed', 'Unable to generate Excel report.');
-      return;
+      if (!response.ok) {
+        addNotification('Export Failed', 'Unable to generate Excel report.');
+        setIsExporting(false);
+        return;
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = reportSchoolYear
+        ? `school-permit-report-${reportSchoolYear}.xlsx`
+        : 'school-permit-report-all-years.xlsx';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+
+      addNotification('Export Complete', `Excel report downloaded successfully. ${activeSchools.length} schools included.`);
+    } catch (error) {
+      addNotification('Export Error', 'Failed to download Excel report.');
+    } finally {
+      setIsExporting(false);
     }
-
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = reportSchoolYear
-      ? `school-permit-report-${reportSchoolYear}.xlsx`
-      : 'school-permit-report-all-years.xlsx';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-
-    addNotification('Export Complete', 'Excel report downloaded successfully.');
   };
 
   return (
@@ -237,6 +250,7 @@ export function DashboardView() {
         <ActionBar 
           onExport={handleExport}
           onCreateSchool={() => setShowCreateForm(true)}
+          isExporting={isExporting}
         />
       </div>
     </div>

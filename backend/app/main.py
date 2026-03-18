@@ -1,5 +1,6 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
 import uvicorn
@@ -9,10 +10,32 @@ import io
 import json
 import sqlite3
 from pathlib import Path
+from .services.storage_service import store_permit_file
+from .services.backup_service import create_backup, restore_backup, get_backup_info
 
 app = FastAPI(title="DepEd Cabuyao School Permit Registry API")
 
 DB_PATH = Path(__file__).resolve().parents[1] / "data" / "sgod.db"
+UPLOADS_DIR = Path(__file__).resolve().parents[1] / "data" / "uploads"
+ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+app.mount("/api/files", StaticFiles(directory=str(UPLOADS_DIR)), name="files")
+
+
+def load_env_file() -> None:
+    if not ENV_PATH.exists():
+        return
+
+    for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 def get_db_connection() -> sqlite3.Connection:
@@ -70,6 +93,7 @@ def save_schools_to_db(schools: list[dict]) -> None:
 
 @app.on_event("startup")
 def on_startup() -> None:
+    load_env_file()
     init_db()
 
 # Enable CORS for frontend integration
@@ -126,6 +150,32 @@ async def put_schools(payload: SchoolsBulkRequest):
         return {"ok": True, "count": len(payload.schools)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save schools: {str(e)}")
+
+
+@app.post("/api/uploads/permit")
+async def upload_permit_file(request: Request, file: UploadFile = File(...)):
+    file_name = (file.filename or "").strip()
+    lower_name = file_name.lower()
+    if not lower_name.endswith((".pdf", ".jpg", ".jpeg", ".png")):
+        raise HTTPException(status_code=400, detail="Invalid file type. Only PDF and images are supported.")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="File is empty.")
+
+    try:
+        result = store_permit_file(
+            file_bytes=content,
+            filename=file_name,
+            content_type=file.content_type or "application/octet-stream",
+            uploads_dir=UPLOADS_DIR,
+            backend_base_url=str(request.base_url),
+        )
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to store permit file: {str(exc)}")
+    finally:
+        await file.close()
 
 @app.post("/api/ocr/permit")
 async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = Form(None)):
@@ -658,6 +708,77 @@ async def create_permit_report(payload: PermitReportRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
+
+
+@app.get("/api/backup")
+async def download_backup():
+    """
+    Create and download a backup of all schools and permit files.
+    Returns a zip file containing schools.json and all uploads.
+    """
+    try:
+        schools = load_schools_from_db()
+        backup_data = create_backup(schools, UPLOADS_DIR)
+        return Response(
+            content=backup_data,
+            media_type="application/zip",
+            headers={"Content-Disposition": "attachment; filename=sgod-backup.zip"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Backup creation failed: {str(e)}")
+
+
+@app.post("/api/backup/restore")
+async def restore_from_backup(file: UploadFile = File(...)):
+    """
+    Restore schools and files from a backup zip file.
+    New files are restored; existing files are skipped to avoid overwrites.
+    """
+    try:
+        backup_content = await file.read()
+        if not backup_content:
+            raise HTTPException(status_code=400, detail="Backup file is empty")
+        
+        restore_result = restore_backup(backup_content, UPLOADS_DIR)
+        
+        # Save restored schools to database
+        if restore_result["schools"]:
+            save_schools_to_db(restore_result["schools"])
+        
+        return {
+            "ok": True,
+            "schools_restored": len(restore_result["schools"]),
+            "files_restored": restore_result["files_restored"],
+            "files_skipped": restore_result["files_skipped"],
+            "timestamp": restore_result["timestamp"],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Backup restore failed: {str(e)}")
+    finally:
+        await file.close()
+
+
+@app.post("/api/backup/info")
+async def get_backup_details(file: UploadFile = File(...)):
+    """
+    Get information about a backup file without restoring it.
+    """
+    try:
+        backup_content = await file.read()
+        if not backup_content:
+            raise HTTPException(status_code=400, detail="Backup file is empty")
+        
+        info = get_backup_info(backup_content)
+        return info
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read backup info: {str(e)}")
+    finally:
+        await file.close()
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

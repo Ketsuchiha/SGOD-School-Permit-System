@@ -53,6 +53,15 @@ pip install -r requirements.txt
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
+### Permit File Storage (Local)
+
+Permit files are stored locally in the `backend/data/uploads/` directory. Files are automatically served via `/api/files/...` endpoints.
+
+No configuration is required. The local storage provides:
+- Persistent file storage across restarts
+- Automatic file serving with proper MIME types
+- Built-in backup and recovery support
+
 The frontend runs at `http://localhost:5173` and the backend API at `http://localhost:8000`.
 
 ---
