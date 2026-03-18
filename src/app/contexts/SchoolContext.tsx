@@ -1,8 +1,75 @@
-import { createContext, useState, useMemo, useContext, useEffect, useRef } from 'react';
+import { createContext, useState, useMemo, useContext, useEffect, useRef, useCallback } from 'react';
 import { School } from '../data/mockData';
 
 const STORAGE_KEY = 'sgod:schools';
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
+
+const normalizeText = (value?: string) => (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+const hasText = (value?: string) => Boolean(value && value.trim().length > 0);
+
+const applyAutoBranchLabels = (incomingSchools: School[]): School[] => {
+  const schools = Array.isArray(incomingSchools) ? incomingSchools : [];
+  const activeSchools = schools.filter((school) => !school.deletedAt);
+
+  const groupedByName = new Map<string, School[]>();
+  for (const school of activeSchools) {
+    const key = normalizeText(school.name);
+    if (!key) {
+      continue;
+    }
+    const bucket = groupedByName.get(key) || [];
+    bucket.push(school);
+    groupedByName.set(key, bucket);
+  }
+
+  const autoLabelById = new Map<string, string>();
+
+  for (const [, group] of groupedByName) {
+    const uniqueAddresses = Array.from(
+      new Set(
+        group
+          .map((school) => normalizeText(school.address))
+          .filter((address) => address.length > 0)
+      )
+    ).sort();
+
+    // Assign only when there are multiple locations for the same school name.
+    if (uniqueAddresses.length <= 1) {
+      continue;
+    }
+
+    const addressToBranchIndex = new Map<string, number>(
+      uniqueAddresses.map((address, index) => [address, index + 1])
+    );
+
+    for (const school of group) {
+      if (hasText(school.branchLabel)) {
+        continue;
+      }
+
+      const normalizedAddress = normalizeText(school.address);
+      const branchIndex = addressToBranchIndex.get(normalizedAddress);
+      if (!branchIndex) {
+        continue;
+      }
+
+      autoLabelById.set(school.id, `Branch ${branchIndex}`);
+    }
+  }
+
+  if (autoLabelById.size === 0) {
+    return schools;
+  }
+
+  return schools.map((school) => {
+    const autoLabel = autoLabelById.get(school.id);
+    if (!autoLabel) {
+      return school;
+    }
+    return { ...school, branchLabel: autoLabel };
+  });
+};
 
 const persistSchools = (schools: School[]) => {
   if (typeof window === 'undefined') {
@@ -75,10 +142,19 @@ interface SchoolContextType {
 const SchoolContext = createContext<SchoolContextType | undefined>(undefined);
 
 export function SchoolProvider({ children }: { children: React.ReactNode }) {
-  const [schools, setSchools] = useState<School[]>(() => loadSchools());
+  const [schools, setSchoolsRaw] = useState<School[]>(() => applyAutoBranchLabels(loadSchools()));
   const hasHydratedFromApi = useRef(false);
   const skipNextApiSync = useRef(false);
   const syncTimer = useRef<number | null>(null);
+
+  const setSchools = useCallback((value: React.SetStateAction<School[]>) => {
+    setSchoolsRaw((previousSchools) => {
+      const nextSchools = typeof value === 'function'
+        ? (value as (prev: School[]) => School[])(previousSchools)
+        : value;
+      return applyAutoBranchLabels(nextSchools);
+    });
+  }, []);
 
   useEffect(() => {
     let isCancelled = false;
