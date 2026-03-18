@@ -25,11 +25,19 @@ export function DashboardView() {
   const [reportStatus, setReportStatus] = useState<'all' | 'operational' | 'renewal' | 'not-operational'>('all');
   const [isExporting, setIsExporting] = useState(false);
 
+  const schoolHasPermitLevel = (school: School, level: keyof School['permitLevels']) => {
+    const permitHistory = school.governmentPermits || [];
+    if (permitHistory.length > 0) {
+      return permitHistory.some((permit) => Boolean(permit?.permitLevels?.[level]));
+    }
+    return Boolean(school.permitLevels?.[level]);
+  };
+
   const totalSchools = activeSchools.length;
-  const kindergartenPermits = activeSchools.filter((s: School) => s.permitLevels.kindergarten).length;
-  const elementaryPermits = activeSchools.filter((s: School) => s.permitLevels.elementary).length;
-  const highSchoolPermits = activeSchools.filter((s: School) => s.permitLevels.highSchool).length;
-  const seniorHighSchoolPermits = activeSchools.filter((s: School) => s.permitLevels.seniorHighSchool).length;
+  const kindergartenPermits = activeSchools.filter((school: School) => schoolHasPermitLevel(school, 'kindergarten')).length;
+  const elementaryPermits = activeSchools.filter((school: School) => schoolHasPermitLevel(school, 'elementary')).length;
+  const highSchoolPermits = activeSchools.filter((school: School) => schoolHasPermitLevel(school, 'highSchool')).length;
+  const seniorHighSchoolPermits = activeSchools.filter((school: School) => schoolHasPermitLevel(school, 'seniorHighSchool')).length;
 
   const availableSchoolYears = useMemo(() => {
     return Array.from(new Set(activeSchools.map((school: School) => school.schoolYear))).sort();
