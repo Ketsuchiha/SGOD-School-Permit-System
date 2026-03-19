@@ -52,6 +52,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [ocrEngine, setOcrEngine] = useState<string>('none');
   const [ocrDiagnostics, setOcrDiagnostics] = useState<OCRDiagnostics | null>(null);
+  const [ocrExtractedPermits, setOcrExtractedPermits] = useState<GovernmentPermit[]>([]);
   const [showLocationPicker, setShowLocationPicker] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   // Existing records should keep their saved coordinates unless user requests geocode.
@@ -234,6 +235,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     setUploadError(null);
     setOcrEngine('none');
     setOcrDiagnostics(null);
+    setOcrExtractedPermits([]);
 
     const permitUrl = await fileToDataUrl(file);
     setEditedSchool((prev) => ({ ...prev, permitUrl }));
@@ -280,6 +282,8 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
         )
       );
 
+      setOcrExtractedPermits(hasMeaningfulPermit ? normalizedPermits : []);
+
       const primaryPermit = normalizedPermits[0] ?? fallbackPermit;
 
       setEditedSchool((prev: School) => {
@@ -317,6 +321,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
       setIsProcessing(false);
       setOcrEngine('none');
       setOcrDiagnostics(null);
+      setOcrExtractedPermits([]);
       setUploadError('OCR failed. File preview is kept; please fill missing fields manually.');
     }
   };
@@ -731,6 +736,31 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                       Top page scores: <span className="font-semibold">{ocrDiagnostics.topPageScores.map((item) => `P${item.page}:${item.score}`).join(' | ')}</span>
                     </div>
                   )}
+                </div>
+              )}
+
+              {ocrExtractedPermits.length > 0 && (
+                <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-3 space-y-2">
+                  <div className="text-xs text-emerald-100 font-semibold">OCR Extracted Permit Preview</div>
+                  <div className="text-xs text-emerald-200">Review these details before clicking Save Changes.</div>
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                    {ocrExtractedPermits.map((permit, index) => {
+                      const levels = [
+                        permit.permitLevels.kindergarten ? 'K' : '',
+                        permit.permitLevels.elementary ? 'E' : '',
+                        permit.permitLevels.highSchool ? 'JHS' : '',
+                        permit.permitLevels.seniorHighSchool ? 'SHS' : '',
+                      ].filter(Boolean);
+
+                      return (
+                        <div key={`${permit.permitNumber}-${permit.schoolYear}-${index}`} className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2">
+                          <div className="text-xs text-emerald-50 font-mono">{permit.permitNumber || '(no permit number)'}</div>
+                          <div className="text-xs text-emerald-200">School Year: {permit.schoolYear || 'Not detected'}</div>
+                          <div className="text-xs text-emerald-200">Levels: {levels.length > 0 ? levels.join(', ') : 'Not detected'}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
 

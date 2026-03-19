@@ -634,18 +634,6 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
                     <div className="space-y-4">
                       <div>
                         <label className="text-xs text-slate-400 mb-2 block">Permit Number *</label>
-                    {showLocationPicker && (
-                      <LocationPickerModal
-                        initialLat={newSchool.lat}
-                        initialLng={newSchool.lng}
-                        onClose={() => setShowLocationPicker(false)}
-                        onConfirm={({ lat, lng }) => {
-                          setManualCoordinates(true);
-                          setNewSchool((prev: School) => ({ ...prev, lat, lng }));
-                          setShowLocationPicker(false);
-                        }}
-                      />
-                    )}
                         <input
                           type="text"
                           value={permit.permitNumber}
@@ -875,6 +863,18 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
           </div>{/* end right column */}
         </div>{/* end body */}
       </div>
+      {showLocationPicker && (
+        <LocationPickerModal
+          initialLat={newSchool.lat}
+          initialLng={newSchool.lng}
+          onClose={() => setShowLocationPicker(false)}
+          onConfirm={({ lat, lng }) => {
+            setManualCoordinates(true);
+            setNewSchool((prev: School) => ({ ...prev, lat, lng }));
+            setShowLocationPicker(false);
+          }}
+        />
+      )}
     </div>
   );
 }
