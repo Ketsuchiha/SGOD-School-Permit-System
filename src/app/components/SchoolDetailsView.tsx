@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { School, getStatusColor, getStatusLabel } from '../data/mockData';
 import { X, MapPin, FileText, Building2, BookOpen, AlertCircle } from 'lucide-react';
 import { PDFViewer } from './PDFViewer';
@@ -21,6 +22,7 @@ const STRAND_LABELS: Record<string, string> = {
 
 export function SchoolDetailsView({ school, onClose }: SchoolDetailsViewProps) {
   const hasPdf = Boolean(school.permitUrl);
+  const [showPdfViewer, setShowPdfViewer] = useState(false);
   const permits = (() => {
     const normalized = (school.governmentPermits ?? []).map((permit) => ({
       permitNumber: permit.permitNumber || '',
@@ -247,28 +249,31 @@ export function SchoolDetailsView({ school, onClose }: SchoolDetailsViewProps) {
                 </div>
               )}
 
-              {/* Permit Document Preview */}
-              <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl overflow-hidden flex flex-col">
+              {/* Permit Document */}
+              <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl p-6">
+                <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+                  <FileText className="w-5 h-5" />
+                  Permit Document
+                </h3>
                 {hasPdf ? (
-                  <>
-                    <div className="px-6 py-4 border-b border-white/10">
-                      <h3 className="text-white font-semibold flex items-center gap-2">
-                        <FileText className="w-5 h-5" />
-                        Permit Document
-                      </h3>
-                    </div>
-                    <div className="flex-1 min-h-[400px] bg-slate-950/50">
-                      <PDFViewer
-                        permitUrl={school.permitUrl}
-                        permitNumber={school.permitNumber || 'Permit'}
-                      />
-                    </div>
-                  </>
+                  <div className="space-y-3">
+                    <p className="text-sm text-slate-300">Open the permit file when needed.</p>
+                    <button
+                      type="button"
+                      onClick={() => setShowPdfViewer(true)}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-200 transition-colors"
+                    >
+                      <FileText className="w-4 h-4" />
+                      View Permit PDF
+                    </button>
+                  </div>
                 ) : (
-                  <div className="p-6 flex flex-col items-center justify-center min-h-[400px] text-center">
-                    <AlertCircle className="w-12 h-12 text-amber-500 mb-3" />
-                    <p className="text-sm text-slate-300 mb-1">No Permit Document</p>
-                    <p className="text-xs text-slate-500">PDF file not currently available for this school</p>
+                  <div className="flex items-center gap-3 text-slate-300">
+                    <AlertCircle className="w-5 h-5 text-amber-500" />
+                    <div>
+                      <p className="text-sm">No Permit Document</p>
+                      <p className="text-xs text-slate-500">PDF file not currently available for this school</p>
+                    </div>
                   </div>
                 )}
               </div>
@@ -316,6 +321,33 @@ export function SchoolDetailsView({ school, onClose }: SchoolDetailsViewProps) {
           </button>
         </div>
       </div>
+
+      {showPdfViewer && hasPdf && (
+        <div className="fixed inset-0 z-[60] bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-6xl h-[88vh] bg-slate-900/95 border border-white/20 rounded-2xl overflow-hidden shadow-2xl flex flex-col">
+            <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between">
+              <div className="min-w-0">
+                <h3 className="text-white text-lg font-semibold truncate">Permit PDF Viewer</h3>
+                <p className="text-xs text-slate-400 truncate">{currentPermit?.permitNumber || school.permitNumber || 'Permit Document'}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPdfViewer(false)}
+                className="p-2 rounded-lg bg-white/10 hover:bg-white/20 transition-colors"
+                aria-label="Close Permit PDF Viewer"
+              >
+                <X className="w-5 h-5 text-white" />
+              </button>
+            </div>
+            <div className="flex-1 min-h-0 bg-slate-950/50">
+              <PDFViewer
+                permitUrl={school.permitUrl}
+                permitNumber={currentPermit?.permitNumber || school.permitNumber || 'Permit'}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

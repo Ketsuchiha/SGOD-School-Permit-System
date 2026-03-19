@@ -58,6 +58,8 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
   // Existing records should keep their saved coordinates unless user requests geocode.
   const [manualCoordinates, setManualCoordinates] = useState(Boolean(school));
   const [activePermitIndex, setActivePermitIndex] = useState(0);
+  const permitDetailsRef = useRef<HTMLDivElement | null>(null);
+  const permitNumberInputRef = useRef<HTMLInputElement | null>(null);
 
   const hasAnyPermitLevel = (levels?: GovernmentPermit['permitLevels']) => {
     if (!levels) return false;
@@ -141,6 +143,15 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
           : [...currentStrands, strand],
       };
     });
+  };
+
+  const handleSelectPermitForEditing = (index: number) => {
+    setActivePermitIndex(index);
+    window.setTimeout(() => {
+      permitDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      permitNumberInputRef.current?.focus();
+      permitNumberInputRef.current?.select();
+    }, 40);
   };
 
   const handleSave = () => {
@@ -457,15 +468,19 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
               </div>
 
               {/* Permit Details */}
-              <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl p-6">
+              <div ref={permitDetailsRef} className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl p-6">
                 <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
                   <FileText className="w-5 h-5" />
                   Permit Details
                 </h3>
+                <div className="mb-3 text-xs text-blue-200">
+                  Editing permit #{selectedPermitIndex + 1} from history
+                </div>
                 <div className="space-y-4">
                   <div>
                     <label className="text-xs text-slate-400 mb-2 block">Permit Number *</label>
                     <input
+                      ref={permitNumberInputRef}
                       type="text"
                       value={currentPermit.permitNumber}
                       onChange={(e) => updatePermitAt(selectedPermitIndex, (permit) => ({ ...permit, permitNumber: e.target.value }))}
@@ -673,7 +688,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                             {permit.permitLevels.seniorHighSchool && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">SHS</span>}
                             <button
                               type="button"
-                              onClick={() => setActivePermitIndex(idx)}
+                              onClick={() => handleSelectPermitForEditing(idx)}
                               className={`ml-2 px-2 py-1 rounded text-xs border transition-colors ${idx === selectedPermitIndex ? 'bg-indigo-500/30 border-indigo-400/60 text-indigo-100' : 'bg-white/5 border-white/15 text-slate-200 hover:bg-white/10'}`}
                             >
                               Edit
