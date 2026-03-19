@@ -195,3 +195,129 @@
     background-color: #0c4da2;
   }
 }
+
+@keyframes metricCardReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(20px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes metricCardSheen {
+  0% {
+    transform: translateX(-140%) skewX(-18deg);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.28;
+  }
+  36% {
+    transform: translateX(180%) skewX(-18deg);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(180%) skewX(-18deg);
+    opacity: 0;
+  }
+}
+
+@keyframes metricOrbit {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.7;
+  }
+  70% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.45);
+    opacity: 0;
+  }
+}
+
+.metric-card-reveal {
+  opacity: 0;
+  animation: metricCardReveal 620ms cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+  animation-delay: 0ms;
+}
+
+.metric-delay-0 { animation-delay: 0ms; }
+.metric-delay-1 { animation-delay: 90ms; }
+.metric-delay-2 { animation-delay: 180ms; }
+.metric-delay-3 { animation-delay: 270ms; }
+.metric-delay-4 { animation-delay: 360ms; }
+.metric-delay-5 { animation-delay: 450ms; }
+.metric-delay-6 { animation-delay: 540ms; }
+.metric-delay-7 { animation-delay: 630ms; }
+
+.metric-card-sheen {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(112deg, transparent 0%, rgba(255, 255, 255, 0.12) 45%, transparent 70%);
+  animation: metricCardSheen 5.2s ease-in-out infinite;
+}
+
+.metric-card-orbit {
+  position: absolute;
+  inset: -6px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 0.85rem;
+  animation: metricOrbit 2.8s ease-out infinite;
+}
+
+.metric-glow-blue { background: linear-gradient(135deg, #0c4da2, transparent); }
+.metric-glow-emerald { background: linear-gradient(135deg, #10b981, transparent); }
+.metric-glow-amber { background: linear-gradient(135deg, #f59e0b, transparent); }
+.metric-glow-violet { background: linear-gradient(135deg, #8b5cf6, transparent); }
+.metric-glow-pink { background: linear-gradient(135deg, #ec4899, transparent); }
+
+.metric-icon-blue {
+  background: linear-gradient(135deg, #0c4da2, #0c4da280);
+  box-shadow: 0 8px 24px #0c4da240;
+}
+
+.metric-icon-emerald {
+  background: linear-gradient(135deg, #10b981, #10b98180);
+  box-shadow: 0 8px 24px #10b98140;
+}
+
+.metric-icon-amber {
+  background: linear-gradient(135deg, #f59e0b, #f59e0b80);
+  box-shadow: 0 8px 24px #f59e0b40;
+}
+
+.metric-icon-violet {
+  background: linear-gradient(135deg, #8b5cf6, #8b5cf680);
+  box-shadow: 0 8px 24px #8b5cf640;
+}
+
+.metric-icon-pink {
+  background: linear-gradient(135deg, #ec4899, #ec489980);
+  box-shadow: 0 8px 24px #ec489940;
+}
+
+.metric-orbit-blue { border-color: #0c4da266; }
+.metric-orbit-emerald { border-color: #10b98166; }
+.metric-orbit-amber { border-color: #f59e0b66; }
+.metric-orbit-violet { border-color: #8b5cf666; }
+.metric-orbit-pink { border-color: #ec489966; }
+
+@media (prefers-reduced-motion: reduce) {
+  .metric-card-reveal,
+  .metric-card-sheen,
+  .metric-card-orbit {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .metric-card-reveal {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

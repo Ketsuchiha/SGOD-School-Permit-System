@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { NotificationSettings } from './NotificationSettings';
-import { LayoutDashboard, Map, BookOpen, Trash2 } from 'lucide-react';
+import { LayoutDashboard, Map, BookOpen, Trash2, Settings } from 'lucide-react';
 
 export function Sidebar() {
   const location = useLocation();
@@ -13,6 +13,7 @@ export function Sidebar() {
     { path: '/map', icon: Map, label: 'Map' },
     { path: '/directory', icon: BookOpen, label: 'School Directory' },
     { path: '/trash', icon: Trash2, label: 'Trash Bin' },
+    { path: '/settings', icon: Settings, label: 'Settings' },
   ];
 
   const isActive = (path: string) => {

@@ -4,7 +4,6 @@ import { MapPin, Navigation, Search, ArrowLeft } from 'lucide-react';
 import { MapContainer, TileLayer, CircleMarker, Popup, useMap } from 'react-leaflet';
 import { useNavigate } from 'react-router-dom';
 import { useSchools } from '../contexts/SchoolContext';
-import { Sidebar } from './Sidebar';
 import { SchoolDetailModal } from './SchoolDetailModal';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import type { LatLngBoundsExpression } from 'leaflet';
@@ -155,9 +154,7 @@ export function MapView() {
   }, [plottedSchools]);
 
   return (
-    <div className="flex">
-      <Sidebar />
-      <div className="flex-1 p-8 ml-20">
+    <div className="p-8">
       {/* Header */}
       <div className="mb-8">
         <button
@@ -309,7 +306,6 @@ export function MapView() {
             )}
           </div>
         </div>
-      </div>
       </div>
       {showDetail && selectedSchool && (
         <SchoolDetailModal

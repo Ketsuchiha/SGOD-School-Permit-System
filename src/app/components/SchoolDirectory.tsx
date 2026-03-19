@@ -3,7 +3,6 @@ import { School, getStatusColor, getStatusLabel } from '../data/mockData';
 import { Search, Grid, List, Building2, ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useSchools } from '../contexts/SchoolContext';
-import { Sidebar } from './Sidebar';
 import { SchoolDetailsView } from './SchoolDetailsView';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
@@ -206,9 +205,7 @@ export function SchoolDirectory() {
   );
 
   return (
-    <div className="flex">
-      <Sidebar />
-      <div className="flex-1 p-8 ml-20">
+    <div className="p-8">
       {/* Header */}
       <div className="mb-8">
         <button
@@ -427,7 +424,6 @@ export function SchoolDirectory() {
           onClose={() => setSelectedSchool(null)}
         />
       )}
-      </div>
     </div>
   );
 }

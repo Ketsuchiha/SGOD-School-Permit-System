@@ -1,5 +1,4 @@
 import { FileSpreadsheet, Plus, Loader2 } from 'lucide-react';
-import { BackupRestoreModal } from './BackupRestoreModal';
 
 interface ActionBarProps {
   onExport: () => void;
@@ -10,9 +9,6 @@ interface ActionBarProps {
 export function ActionBar({ onExport, onCreateSchool, isExporting = false }: ActionBarProps) {
   return (
     <div className="fixed bottom-8 right-8 flex items-center gap-4 z-30">
-      {/* Backup Button */}
-      <BackupRestoreModal />
-
       {/* Export Button */}
       <button
         onClick={onExport}

@@ -157,6 +157,7 @@ export function DashboardView() {
             icon={Building2}
             trend={[45, 52, 48, 58, 62, 70, 75, 72, 78]}
             color="#0C4DA2"
+            animationIndex={0}
           />
           <MetricCard
             title="Kindergarten Permits"
@@ -164,6 +165,7 @@ export function DashboardView() {
             icon={Baby}
             trend={[35, 38, 40, 42, 45, 48, 50, 52, 54]}
             color="#10b981"
+            animationIndex={1}
           />
           <MetricCard
             title="Elementary Permits"
@@ -171,6 +173,7 @@ export function DashboardView() {
             icon={BookOpen}
             trend={[40, 42, 44, 46, 48, 50, 52, 54, 56]}
             color="#f59e0b"
+            animationIndex={2}
           />
           <MetricCard
             title="High School Permits"
@@ -178,6 +181,7 @@ export function DashboardView() {
             icon={GraduationCap}
             trend={[20, 22, 24, 26, 28, 30, 32, 34, 36]}
             color="#8b5cf6"
+            animationIndex={3}
           />
           <MetricCard
             title="Senior High School"
@@ -185,6 +189,7 @@ export function DashboardView() {
             icon={SchoolIcon}
             trend={[15, 17, 19, 21, 23, 25, 27, 29, 31]}
             color="#ec4899"
+            animationIndex={4}
           />
         </div>
 
