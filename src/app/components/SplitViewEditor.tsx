@@ -7,6 +7,7 @@ import { fileToDataUrl } from '../utils/fileDataUrl';
 import { LocationPickerModal } from './LocationPickerModal';
 import { ConfirmationModal } from './ConfirmationModal';
 import { useNotifications } from '../contexts/NotificationContext';
+import { useAuditLog } from '../contexts/AuditLogContext';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 interface SplitViewEditorProps {
@@ -20,6 +21,7 @@ interface SplitViewEditorProps {
 export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool = false }: SplitViewEditorProps) {
   const apiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
   const { addNotification } = useNotifications();
+  const { addLog } = useAuditLog();
   const fallbackLogo = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2NgYGBgAAAABQABDQottAAAAABJRU5ErkJggg==';
   const [logoSrc, setLogoSrc] = useState<string>(import.meta.env?.VITE_DEPED_LOGO_URL ?? '/Deped_Logo.png');
   const [editedSchool, setEditedSchool] = useState<School>(
@@ -324,6 +326,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
       });
 
       setActivePermitIndex(0);
+      addLog('permit_upload', `Renew permit uploaded for school "${editedSchool.name || school?.name || 'Unknown School'}".`);
 
       setIsProcessing(false);
     } catch (error) {

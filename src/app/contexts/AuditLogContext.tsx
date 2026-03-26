@@ -1,7 +1,7 @@
 
 import React, { createContext, useState, useContext, useCallback } from 'react';
 
-export type AuditLogAction = 'delete' | 'restore' | 'permanent_delete';
+export type AuditLogAction = 'create' | 'update' | 'delete' | 'restore' | 'permanent_delete' | 'permit_upload';
 
 export interface AuditLogEntry {
   id: number;
