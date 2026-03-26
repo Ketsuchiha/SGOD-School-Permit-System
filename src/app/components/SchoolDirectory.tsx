@@ -38,7 +38,7 @@ const inferPermitLevelFromNumber = (permitNumber?: string): Partial<Record<Permi
   if (code.startsWith('E')) {
     return { elementary: true };
   }
-  if (code.startsWith('S') || sanitized.includes('JHS')) {
+  if (code.startsWith('J') || code.startsWith('S') || sanitized.includes('JHS')) {
     return { highSchool: true };
   }
 
@@ -191,18 +191,20 @@ export function SchoolDirectory() {
     )
   ).sort();
 
-  const filteredSchools = activeSchools.filter((school: School) =>
-    (
-      school.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      school.barangay.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      school.permitNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (school.governmentPermits || []).some((permit) =>
-        (permit.permitNumber || '').toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredSchools = activeSchools
+    .filter((school: School) =>
+      (
+        school.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        school.barangay.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        school.permitNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (school.governmentPermits || []).some((permit) =>
+          (permit.permitNumber || '').toLowerCase().includes(searchQuery.toLowerCase())
+        )
       )
+      && schoolMatchesYear(school, schoolYearFilter)
+      && schoolHasPermitLevel(school, permitLevelFilter)
     )
-    && schoolMatchesYear(school, schoolYearFilter)
-    && schoolHasPermitLevel(school, permitLevelFilter)
-  );
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 
   return (
     <div className="p-8">

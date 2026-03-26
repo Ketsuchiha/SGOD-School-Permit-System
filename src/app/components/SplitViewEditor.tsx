@@ -313,8 +313,6 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
 
         return {
           ...prev,
-          name: ocrResult.name ?? prev.name,
-          address: ocrResult.address ?? prev.address,
           permitNumber: primaryPermit.permitNumber || prev.permitNumber,
           schoolYear: primaryPermit.schoolYear || prev.schoolYear,
           permitLevels: primaryPermit.permitLevels,
@@ -353,6 +351,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
   const permitHistory = getPermitList(editedSchool);
   const selectedPermitIndex = Math.min(activePermitIndex, Math.max(permitHistory.length - 1, 0));
   const currentPermit = permitHistory[selectedPermitIndex] || createPermitFromSchool(editedSchool);
+  const isRenewPermitMode = !isNewSchool && (isProcessing || Boolean(storedFileRef.current) || ocrExtractedPermits.length > 0);
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -410,9 +409,10 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                     <input
                       type="text"
                       value={editedSchool.name}
+                      readOnly={isRenewPermitMode}
                       onChange={(e) => setEditedSchool({ ...editedSchool, name: e.target.value })}
                       placeholder="Enter school name"
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
+                      className={`w-full border border-white/10 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#0C4DA2] ${isRenewPermitMode ? 'bg-white/10 cursor-not-allowed opacity-80' : 'bg-white/5'}`}
                     />
                   </div>
 
@@ -422,9 +422,10 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                       <input
                         type="text"
                         value={editedSchool.address}
+                        readOnly={isRenewPermitMode}
                         onChange={(e) => setEditedSchool({ ...editedSchool, address: e.target.value })}
                         placeholder="Enter complete address"
-                        className="flex-1 bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#0C4DA2]"
+                        className={`flex-1 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-[#0C4DA2] ${isRenewPermitMode ? 'bg-white/10 cursor-not-allowed opacity-80' : 'bg-white/5'}`}
                       />
                       <button
                           type="button"
@@ -442,6 +443,11 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                         Pin Exact
                       </button>
                     </div>
+                    {isRenewPermitMode && (
+                      <div className="mt-2 text-xs text-amber-200">
+                        Renew permit mode: school name and address are locked and only permit details can be updated.
+                      </div>
+                    )}
                     <div className="mt-2 text-xs text-slate-300">Coordinates: {editedSchool.lat.toFixed(6)}, {editedSchool.lng.toFixed(6)}</div>
                     <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
                       <input

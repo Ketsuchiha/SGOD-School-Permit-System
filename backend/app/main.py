@@ -317,7 +317,18 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
             return re.sub(r"\s+", " ", value).strip(" .,-")
 
         def normalize_permit_code(code: str) -> str:
-            return re.sub(r"\s+", "", code).upper()
+            compact = re.sub(r"\s+", "", code).upper()
+            compact = compact.replace("\u2013", "-").replace("\u2014", "-")
+            match = re.match(r"^(SHS|E|J|K)-(\d{2,6})$", compact)
+            if not match:
+                return ""
+            return f"{match.group(1)}-{match.group(2)}"
+
+        def extract_school_permit_codes(source: str) -> list[str]:
+            return [
+                f"{prefix.upper()}-{number}"
+                for prefix, number in re.findall(r"\b(SHS|E|J|K)\s*[-\u2013\u2014]\s*(\d{2,6})\b", source, re.IGNORECASE)
+            ]
 
         def find_first(patterns: list[str], source: str, flags: int = re.IGNORECASE) -> str:
             for pattern in patterns:
@@ -353,41 +364,33 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
             ], raw_text, re.IGNORECASE)
         address = clean_value(address)
 
-        permit_sample_pairs = re.findall(r"\bNo\.?\s*([A-Z]{1,6}\s*-\s*\d{2,6})\s*,?\s*s\.?\s*(\d{4})", normalized, re.IGNORECASE)
+        permit_sample_pairs = re.findall(r"\bNo\.?\s*((?:SHS|E|J|K)\s*[-\u2013\u2014]\s*\d{2,6})\s*,?\s*s\.?\s*(20\d{2})", normalized, re.IGNORECASE)
         permit_candidates = [normalize_permit_code(p) for p, _ in permit_sample_pairs]
         inferred_school_years = [f"{y.strip()}-{int(y.strip()) + 1}" for _, y in permit_sample_pairs if y.strip().isdigit()]
 
         permit_sample_pairs.extend(
-            re.findall(r"(?:government\s+permit\s*\([^\)]*\)\s*)?no\.?\s*([A-Z]{1,8}\s*-\s*\d{2,6})\s*,?\s*s\.?\s*(20\d{2})", normalized, re.IGNORECASE)
+            re.findall(r"(?:government\s+permit\s*\([^\)]*\)\s*)?no\.?\s*((?:SHS|E|J|K)\s*[-\u2013\u2014]\s*\d{2,6})\s*,?\s*s\.?\s*(20\d{2})", normalized, re.IGNORECASE)
         )
         permit_candidates.extend([normalize_permit_code(p) for p, _ in permit_sample_pairs])
         inferred_school_years.extend([f"{y.strip()}-{int(y.strip()) + 1}" for _, y in permit_sample_pairs if y.strip().isdigit()])
 
-        permit_candidates.extend([
-            normalize_permit_code(p)
-            for p in re.findall(
-                r"(?:GP\s*No\.?|Government\s*Permit\s*(?:No\.?|Number\.?|#)?|Permit\s*(?:No\.?|Number\.?|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9\-./\s]{3,})",
-                normalized,
-                re.IGNORECASE,
-            )
-        ])
+        labeled_permit_sections = re.findall(
+            r"(?:GP\s*No\.?|Government\s*Permit\s*(?:No\.?|Number\.?|#)?|Permit\s*(?:No\.?|Number\.?|#))\s*[:#-]?\s*([A-Z0-9][A-Z0-9\-./\s]{3,})",
+            normalized,
+            re.IGNORECASE,
+        )
+        for section in labeled_permit_sections:
+            permit_candidates.extend(extract_school_permit_codes(section))
 
-        permit_candidates.extend([
-            normalize_permit_code(p)
-            for p in re.findall(r"\b(DEPED-[A-Z0-9\-]{6,})\b", normalized, re.IGNORECASE)
-        ])
-
-        permit_candidates.extend([
-            normalize_permit_code(p)
-            for p in re.findall(r"\b([A-Z]{2,6}\s*-\s*[A-Z]{2,6}\s*-\s*20\d{2}\s*-\s*\d{2,6})\b", normalized, re.IGNORECASE)
-        ])
+        permit_candidates.extend(extract_school_permit_codes(normalized))
 
         deduped_permits = []
         seen = set()
         for p in permit_candidates:
-            key = p.strip().upper()
+            normalized_permit = normalize_permit_code(p)
+            key = normalized_permit.strip().upper()
             if key and key not in seen:
-                deduped_permits.append(p.strip())
+                deduped_permits.append(normalized_permit.strip())
                 seen.add(key)
 
         school_year_matches = re.findall(r"(?:effective\s+this\s+school\s+year\s+)?(20\d{2}\s*[-/]\s*20\d{2})", normalized, re.IGNORECASE)
