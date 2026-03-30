@@ -14,6 +14,7 @@ export interface GovernmentPermit {
   permitNumber: string;
   schoolYear: string;
   issueDate?: string;
+  permitUrl?: string;
   permitLevels: PermitLevel;
   shsStrands?: SHSStrand[];
 }
@@ -23,6 +24,7 @@ export interface OCRDiagnostics {
   confidence?: number;
   missingFields?: string[];
   topPageScores?: Array<{ page: number; score: number }>;
+  totalPages?: number;
 }
 
 export interface School {

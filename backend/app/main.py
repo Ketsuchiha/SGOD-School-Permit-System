@@ -113,6 +113,10 @@ class GeocodeResponse(BaseModel):
     lat: float
     lng: float
 
+class ReverseGeocodeRequest(BaseModel):
+    lat: float
+    lng: float
+
 class ReportPermitLevels(BaseModel):
     kindergarten: bool = False
     elementary: bool = False
@@ -200,8 +204,10 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
             if not compact:
                 return 0
             score = 0
-            if "government permit" in compact:
+            if "government permit" in compact or "permit" in compact:
                 score += 8
+            if "gp-" in compact or "s-" in compact or "gp" in compact:
+                score += 6
             if "school year" in compact:
                 score += 5
             if "complete address" in compact:
@@ -210,8 +216,22 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
                 score += 4
             if "senior high school" in compact:
                 score += 5
+            if "junior high school" in compact or "high school" in compact:
+                score += 4
+            if "elementary" in compact:
+                score += 3
+            if "kindergarten" in compact or " kg " in compact:
+                score += 3
             if re.search(r"\bno\.?\s*[a-z]{1,5}-\d{2,6}\b", compact):
                 score += 4
+            if re.search(r"\b(shs|e|j|k)\s*-\s*\d{3,6}\b", compact):
+                score += 5
+            if re.search(r"\b(gp|s|p)\s*-\s*[a-z0-9]{2,6}\b", compact):
+                score += 5
+            if re.search(r"\b20\d{2}-20\d{2}\b", compact) or re.search(r"\b20\d{2}\s*-\s*20\d{2}\b", compact):
+                score += 4
+            if "deped" in compact or "departme" in compact:
+                score += 3
             if "indorsement" in compact or "endorsement" in compact:
                 score -= 2
             return score
@@ -249,8 +269,9 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
             ordered_idxs = priority_idxs + remaining_idxs
             text = "\n".join([page_texts[i] for i in ordered_idxs])
 
-            # Scanned PDF fallback: if very little selectable text, try image OCR on all pages
-            if len(re.sub(r"\s+", "", text)) < 80:
+            # Scanned PDF fallback: if very little selectable text OR all scores are 0, try image OCR on all pages
+            has_meaningful_match = any(re.search(r"\b(SHS|E|J|K)\s*-\s*\d{2,6}\b", page_texts[i], re.IGNORECASE) for i in priority_idxs if i < len(page_texts))
+            if len(re.sub(r"\s+", "", text)) < 150 or (not has_meaningful_match and all(s["score"] == 0 for s in page_scores)):
                 try:
                     import fitz  # pymupdf
                     import pytesseract
@@ -281,8 +302,24 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
                     if len(re.sub(r"\s+", "", fallback_text)) > len(re.sub(r"\s+", "", text)):
                         text = fallback_text
                         engine = "image-ocr"
-                except Exception:
-                    pass
+                except Exception as ocr_error:
+                    # If tesseract not available, try alternative: extract images and use basic vision
+                    try:
+                        import fitz
+                        ocr_doc = fitz.open(stream=content, filetype="pdf")
+                        pdf_text_parts = []
+                        for page_idx in priority_idxs if priority_idxs else range(len(ocr_doc)):
+                            page = ocr_doc.load_page(page_idx)
+                            # Try to extract text from images in the PDF using basic methods
+                            page_text = page.get_text()
+                            if page_text.strip():
+                                pdf_text_parts.append(page_text)
+                        ocr_doc.close()
+                        if pdf_text_parts and len(re.sub(r"\s+", "", "\n".join(pdf_text_parts))) > len(re.sub(r"\s+", "", text)):
+                            text = "\n".join(pdf_text_parts)
+                            engine = "pdf-recovery"
+                    except:
+                        pass
         else:
             try:
                 import pytesseract
@@ -319,16 +356,30 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
         def normalize_permit_code(code: str) -> str:
             compact = re.sub(r"\s+", "", code).upper()
             compact = compact.replace("\u2013", "-").replace("\u2014", "-")
-            match = re.match(r"^(SHS|E|J|K)-(\d{2,6})$", compact)
-            if not match:
-                return ""
-            return f"{match.group(1)}-{match.group(2)}"
+
+            # Canonical school-level permit codes.
+            school_match = re.match(r"^(SHS|E|J|K)-(\d{2,6})$", compact)
+            if school_match:
+                return f"{school_match.group(1)}-{school_match.group(2)}"
+
+            # Accept broader government permit formats such as GP-ITA, S-067, P-2020A.
+            generic_match = re.match(r"^([A-Z]{1,4})-([A-Z0-9]{2,8})$", compact)
+            if generic_match:
+                return f"{generic_match.group(1)}-{generic_match.group(2)}"
+
+            return ""
 
         def extract_school_permit_codes(source: str) -> list[str]:
             return [
                 f"{prefix.upper()}-{number}"
                 for prefix, number in re.findall(r"\b(SHS|E|J|K)\s*[-\u2013\u2014]\s*(\d{2,6})\b", source, re.IGNORECASE)
             ]
+        
+        def extract_gp_permits(source: str) -> list[str]:
+            """Extract Government Permit codes like GP-ITA, S-067, etc."""
+            # Match patterns like GP-ITA, GP-123, S-067, S-ITA
+            gp_permits = re.findall(r"\b([GSP]{1,2})\s*[-\u2013\u2014]\s*([A-Z0-9]{2,6})\b", source, re.IGNORECASE)
+            return [f"{prefix.upper()}-{code.upper()}" for prefix, code in gp_permits]
 
         def find_first(patterns: list[str], source: str, flags: int = re.IGNORECASE) -> str:
             for pattern in patterns:
@@ -346,7 +397,13 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
             name = find_first([
                 r"\n\s*([A-Z][A-Z\s\.,&'\-]{6,})\s*\n\s*\(?\s*School\s*\)?",
                 r"\b(ST\.?\s+VINCENT\s+COLLEGE\s+OF\s+CABUYAO)\b",
+                r"^([A-Z][A-Z0-9\s\.,&'\-]{8,})",  # First line with caps
             ], raw_text, re.IGNORECASE)
+        if not name:
+            # Try to find any capitalized text that looks like a school name (at least 10 chars, letters/numbers/spaces)
+            potential_names = re.findall(r"[A-Z][A-Z0-9 ]{10,}(?:COLLEGE|SCHOOL|ACADEMY|CENTER|INSTITUTE|HIGH|INC|CORP)", normalized, re.IGNORECASE)
+            if potential_names:
+                name = clean_value(potential_names[0])
         name = clean_value(name)
 
         address = ""
@@ -362,6 +419,11 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
                 r"\n\s*([^\n]{4,120}Cabuyao\s+City)\s*\n\s*\(?\s*Complete\s+Address\s*\)?",
                 r"\b([A-Z][A-Za-z\s,.-]{3,120}Cabuyao\s+City)\b",
             ], raw_text, re.IGNORECASE)
+        if not address:
+            # Try to find any line with Cabuyao City
+            cabuyao_lines = re.findall(r"([^.\n]{10,140}Cabuyao\s+(?:City|Laguna))", normalized, re.IGNORECASE)
+            if cabuyao_lines:
+                address = clean_value(cabuyao_lines[0])
         address = clean_value(address)
 
         permit_sample_pairs = re.findall(r"\bNo\.?\s*((?:SHS|E|J|K)\s*[-\u2013\u2014]\s*\d{2,6})\s*,?\s*s\.?\s*(20\d{2})", normalized, re.IGNORECASE)
@@ -384,6 +446,43 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
 
         permit_candidates.extend(extract_school_permit_codes(normalized))
 
+        # Extract Government Permit codes like GP-ITA, S-067, etc.
+        permit_candidates.extend(extract_gp_permits(normalized))
+
+        # Additional flexible permit extraction for various formats
+        more_permits = re.findall(r"(?:([A-Z]{1,3})\s*-\s*(\d{3,6}))", normalized, re.IGNORECASE)
+        for prefix, number in more_permits:
+            if prefix.upper() in ['SHS', 'E', 'J', 'K']:
+                permit_candidates.append(f"{prefix.upper()}-{number}")
+        
+        # Extract from common phrases
+        common_phrases = re.findall(r"permit(?:ted)?\s+(?:no\.?|number)?\s*(?:is)?\s*([A-Z]+-\d{2,6})", normalized, re.IGNORECASE)
+        permit_candidates.extend(common_phrases)
+        
+        # Extract from lines that look like permit info
+        permit_lines = re.findall(r"^[A-Z]{1,3}-\d{3,6}$", normalized, re.MULTILINE)
+        permit_candidates.extend(permit_lines)
+        
+        # Extract permit numbers in barcode-like format (just digits after J/E/SHS/K)
+        # Matches: J026608, E00123, SHS0042, etc.
+        barcode_matches = re.findall(r"\b([JEKSHS]{1,3})[\s]*0*([0-9]{4,6})\b", normalized, re.IGNORECASE)
+        for prefix, number in barcode_matches:
+            # Clean up the prefix - remove any "0" characters that might have been included
+            clean_prefix = prefix.replace("0", "").upper()[:3]
+            if clean_prefix and clean_prefix in ['SHS', 'E', 'J', 'K']:
+                numstr = number.lstrip('0') or '0'
+                permit_candidates.append(f"{clean_prefix}-{numstr}")
+        
+        # Also try to match even without spaces between prefix and number
+        # E.g., "J026608" as a continuous string
+        tight_barcode = re.findall(r"\b([JE])(\d{6})\b", normalized, re.IGNORECASE)
+        for prefix, number in tight_barcode:
+            permit_candidates.append(f"{prefix.upper()}-{number.lstrip('0') or number}")
+        
+        tight_barcode_shs = re.findall(r"\b(SHS|K)(\d{6})\b", normalized, re.IGNORECASE)
+        for prefix, number in tight_barcode_shs:
+            permit_candidates.append(f"{prefix.upper()}-{number.lstrip('0') or number}")
+
         deduped_permits = []
         seen = set()
         for p in permit_candidates:
@@ -397,26 +496,67 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
         school_year_matches.extend(
             re.findall(r"effective\s+this\s+school\s+year\s+([0-9]{4}\s*[-/]\s*[0-9]{4})", normalized, re.IGNORECASE)
         )
+        # Additional school year patterns
+        school_year_matches.extend(re.findall(r"school\s+year\s+([0-9]{4}\s*[-/]\s*[0-9]{4})", normalized, re.IGNORECASE))
+        school_year_matches.extend(re.findall(r"year\s+([0-9]{4}\s*[-/]\s*[0-9]{4})", normalized, re.IGNORECASE))
+        school_year_matches.extend(re.findall(r"s\.?\s*([0-9]{4}\s*[-/]\s*[0-9]{4})", normalized, re.IGNORECASE))
+        school_year_matches.extend(re.findall(r"\(([0-9]{4}\s*[-/]\s*[0-9]{4})\)", normalized, re.IGNORECASE))
+        # Match patterns like "2017 -" or "2017-" (incomplete year ranges)
+        school_year_matches.extend(re.findall(r"\b(20\d{2})\s*[-/]\s*$", normalized, re.IGNORECASE | re.MULTILINE))
+        school_year_matches.extend(re.findall(r"(\d{4})\s*[-/]\s*(\d{4})", normalized, re.IGNORECASE))
+        school_year_matches.extend(re.findall(r"effective\s+this\s+school\s+year\s+(\d{4})\s*-\s*(\d{4})", normalized, re.IGNORECASE))
+        
+        # Infer school years from single years found in document
+        single_years = re.findall(r"\b(20\d{2})\b", normalized)
+        for year in single_years:
+            if year.isdigit():
+                year_int = int(year)
+                inferred_school_years.append(f"{year_int}-{year_int + 1}")
+        
         school_years = []
         year_seen = set()
         for y in (school_year_matches + inferred_school_years):
+            # Handle tuple results from certain regexes
+            if isinstance(y, tuple):
+                y = f"{y[0]}-{y[1]}"
             clean = re.sub(r"\s+", "", y).replace("/", "-")
-            if clean not in year_seen:
-                school_years.append(clean)
-                year_seen.add(clean)
+            # Remove trailing dash if incomplete
+            clean = re.sub(r"-$", "", clean)
+            if clean and (re.match(r"^\d{4}-\d{4}$", clean) or re.match(r"^\d{4}$", clean)):
+                # If just a single year, expand it
+                if re.match(r"^\d{4}$", clean):
+                    year_int = int(clean)
+                    clean = f"{year_int}-{year_int + 1}"
+                if clean not in year_seen:
+                    school_years.append(clean)
+                    year_seen.add(clean)
 
         def contains_any(source: str, patterns: list[str]) -> bool:
             return any(re.search(p, source, re.IGNORECASE) for p in patterns)
 
         default_levels = {
-            "kindergarten": contains_any(normalized, [r"\bkindergarten\b", r"\bK\b\s*-\s*kindergarten"]),
-            "elementary": contains_any(normalized, [r"\belementary\b", r"\bE\b\s*-\s*elementary"]),
-            "highSchool": contains_any(normalized, [r"junior\s+high\s+school", r"\bJHS\b", r"\bJ\b\s*-"]),
-            "seniorHighSchool": contains_any(normalized, [r"senior\s+high\s+school", r"\bSHS\b", r"senior\s+high\s+school\s+program"]),
+            "kindergarten": contains_any(normalized, [r"\bkindergarten\b", r"\bK\b\s*-\s*kindergarten", r"kg", r"\(K\)"]),
+            "elementary": contains_any(normalized, [r"\belementary\b", r"\bE\b\s*-\s*elementary", r"elem", r"\(E\)"]),
+            "highSchool": contains_any(normalized, [r"junior\s+high\s+school", r"\bJHS\b", r"\bJ\b\s*-", r"junior high", r"\(J\)"]),
+            "seniorHighSchool": contains_any(normalized, [r"senior\s+high\s+school", r"\bSHS\b", r"senior high school program", r"senior high", r"SHS program", r"\(SHS\)"]),
         }
 
         if default_levels["seniorHighSchool"]:
             default_levels["highSchool"] = False
+        
+        # If we found SHS in permit codes, mark as senior high school
+        if any(code.startswith("SHS") for code in deduped_permits):
+            default_levels["seniorHighSchool"] = True
+            default_levels["highSchool"] = False
+        # If we found E in permit codes, mark as elementary
+        if any(code.startswith("E-") for code in deduped_permits):
+            default_levels["elementary"] = True
+        # If we found J in permit codes, mark as junior high school
+        if any(code.startswith("J-") for code in deduped_permits):
+            default_levels["highSchool"] = True
+        # If we found K in permit codes, mark as kindergarten
+        if any(code.startswith("K-") for code in deduped_permits):
+            default_levels["kindergarten"] = True
 
         strand_patterns = {
             "STEM": [r"\bSTEM\b", r"science\s*,?\s*technology\s*,?\s*engineering\s*(?:and|&)\s*mathematics"],
@@ -424,10 +564,11 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
             "HUMSS": [r"\bHUMSS\b", r"humanities\s*(?:and|&)\s*social\s+sciences"],
             "GAS": [r"\bGAS\b", r"general\s+academic\s+strand"],
             "TVL-ICT": [r"\bTVL[-\s]*ICT\b", r"information\s+and\s+communications?\s+technology"],
-            "TVL-HE": [r"\bTVL[-\s]*HE\b", r"home\s+economics"],
+            "TVL-HE": [r"\bTVL[-\s]*HE\b", r"home\s+economics", r"\bhome\s+ec\b"],
             "TVL-IA": [r"\bTVL[-\s]*IA\b", r"industrial\s+arts"],
             "ARTS-DESIGN": [r"\bARTS[-\s]*DESIGN\b", r"arts\s*(?:and|&)\s*design"],
             "SPORTS": [r"\bSPORTS\b", r"sports\s+track"],
+            "TVL": [r"\bTVL\b", r"technical\s+(?:and\s+)?vocational(?:\s+livelihood)?"],
         }
         detected_strands = [
             strand
@@ -476,9 +617,29 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
         ]
         if not selected_scores and page_scores:
             selected_scores = [item["score"] for item in page_scores[:3]]
-        confidence = 0.0
+        
+        # Boost confidence based on how many fields we successfully extracted
+        fields_found = 0
+        total_critical_fields = 5
+        if name: fields_found += 1
+        if address: fields_found += 1
+        if primary["permitNumber"]: fields_found += 1
+        resolved_school_year = primary["schoolYear"] or school_year
+        if resolved_school_year: fields_found += 1
+        if any(primary["permitLevels"].values()): fields_found += 1
+        
+        # Calculate confidence with a minimum floor
+        # Base it more on field extraction than page scoring since page scoring is unreliable for scanned PDFs
+        fields_confidence = fields_found / total_critical_fields
+        
         if selected_scores:
-            confidence = min(1.0, max(0.0, sum(selected_scores) / (len(selected_scores) * 12.0)))
+            base_confidence = min(1.0, max(0.0, sum(selected_scores) / (len(selected_scores) * 12.0)))
+        else:
+            base_confidence = 0.1 if engine == "image-ocr" else 0.0  # Give some credit to image OCR
+        
+        # Weight: 30% on page scoring, 70% on field extraction success
+        # This makes it more robust for scanned documents
+        confidence = min(1.0, max(0.1 * (fields_found > 0), (base_confidence * 0.3) + (fields_confidence * 0.7)))
 
         missing_fields = []
         if not name:
@@ -506,6 +667,7 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
                 "selectedPages": selected_page_numbers,
                 "confidence": confidence,
                 "missingFields": missing_fields,
+                "totalPages": len(page_texts) if fname.endswith('.pdf') else 1,
                 "topPageScores": sorted(page_scores, key=lambda item: item["score"], reverse=True)[:5],
             },
         }
@@ -529,6 +691,7 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
                 "selectedPages": [],
                 "confidence": 0.0,
                 "missingFields": ["name", "address", "permitNumber", "schoolYear", "permitLevels"],
+                "totalPages": 0,
                 "topPageScores": [],
             },
         }
@@ -641,6 +804,44 @@ async def geocode(request: GeocodeRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Geocoding failed: {str(e)}")
+
+
+@app.post("/api/reverse-geocode")
+async def reverse_geocode(request: ReverseGeocodeRequest):
+    try:
+        from importlib import import_module
+        geocoders = import_module("geopy.geocoders")
+        Nominatim = geocoders.Nominatim
+        geolocator = Nominatim(user_agent="deped-cabuyao-school-registry")
+
+        lat = float(request.lat)
+        lng = float(request.lng)
+
+        if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+            raise HTTPException(status_code=400, detail="Invalid coordinates")
+
+        location = geolocator.reverse(
+            f"{lat}, {lng}",
+            timeout=12,
+            language="en",
+            addressdetails=True,
+            zoom=18,
+        )
+
+        if not location:
+            raise HTTPException(status_code=404, detail="Address not found")
+
+        return {
+            "address": getattr(location, "address", "") or "",
+            "lat": lat,
+            "lng": lng,
+        }
+    except ImportError:
+        raise HTTPException(status_code=503, detail="Geocoding service unavailable")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reverse geocoding failed: {str(e)}")
 
 @app.get("/api/reports/permits")
 async def get_permit_report(

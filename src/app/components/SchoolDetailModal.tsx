@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { School, getStatusColor, getStatusLabel } from '../data/mockData';
 import { X, MapPin, FileText, Building2, BookOpen } from 'lucide-react';
 import { PDFViewer } from './PDFViewer';
@@ -20,12 +21,12 @@ const STRAND_LABELS: Record<string, string> = {
 };
 
 export function SchoolDetailModal({ school, onClose }: SchoolDetailModalProps) {
-  const hasPdf = Boolean(school.permitUrl);
   const permits = (() => {
     const normalized = (school.governmentPermits ?? []).map((permit) => ({
       permitNumber: permit.permitNumber || '',
       schoolYear: permit.schoolYear || '',
       issueDate: permit.issueDate || school.issueDate || '',
+      permitUrl: permit.permitUrl || '',
       permitLevels: {
         kindergarten: Boolean(permit.permitLevels?.kindergarten),
         elementary: Boolean(permit.permitLevels?.elementary),
@@ -39,6 +40,7 @@ export function SchoolDetailModal({ school, onClose }: SchoolDetailModalProps) {
       permitNumber: school.permitNumber || '',
       schoolYear: school.schoolYear || '',
       issueDate: school.issueDate || '',
+      permitUrl: school.permitUrl || '',
       permitLevels: {
         kindergarten: Boolean(school.permitLevels?.kindergarten),
         elementary: Boolean(school.permitLevels?.elementary),
@@ -74,7 +76,10 @@ export function SchoolDetailModal({ school, onClose }: SchoolDetailModalProps) {
 
     return merged.sort((a, b) => yearStart(b.schoolYear) - yearStart(a.schoolYear));
   })();
-  const currentPermit = permits[0] ?? null;
+  const [selectedPermitIndex, setSelectedPermitIndex] = useState(0);
+  const currentPermit = permits[selectedPermitIndex] ?? permits[0] ?? null;
+  const currentPermitUrl = currentPermit?.permitUrl || school.permitUrl || '';
+  const hasPdf = Boolean(currentPermitUrl);
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -113,8 +118,8 @@ export function SchoolDetailModal({ school, onClose }: SchoolDetailModalProps) {
           {hasPdf && (
             <div className="w-[45%] shrink-0 border-r border-white/10 overflow-hidden">
               <PDFViewer
-                permitUrl={school.permitUrl}
-                permitNumber={school.permitNumber || 'Permit'}
+                permitUrl={currentPermitUrl}
+                permitNumber={currentPermit?.permitNumber || school.permitNumber || 'Permit'}
               />
             </div>
           )}
@@ -175,6 +180,33 @@ export function SchoolDetailModal({ school, onClose }: SchoolDetailModalProps) {
                   </div>
                 </div>
 
+                <div>
+                  <div className="text-xs text-slate-400 mb-1">Uploaded File</div>
+                  {currentPermit.permitUrl ? (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 text-xs">
+                      Available
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded bg-rose-500/20 border border-rose-500/40 text-rose-200 text-xs">
+                      No File
+                    </span>
+                  )}
+                </div>
+
+                {currentPermit.permitUrl && (
+                  <div>
+                    <a
+                      href={currentPermit.permitUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/40 text-blue-200 text-xs hover:bg-blue-600/30"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      View {currentPermit.schoolYear || 'Selected'} Permit File
+                    </a>
+                  </div>
+                )}
+
                 {/* Permitted levels */}
                 <div>
                   <div className="text-xs text-slate-400 mb-2">Permitted Levels</div>
@@ -225,17 +257,45 @@ export function SchoolDetailModal({ school, onClose }: SchoolDetailModalProps) {
                   {permits.map((permit, idx) => (
                     <div
                       key={idx}
-                      className={`flex items-center justify-between gap-3 p-3 rounded-lg border ${idx === 0 ? 'bg-blue-500/10 border-blue-500/30' : 'bg-white/5 border-white/10'}`}
+                      className={`flex items-center justify-between gap-3 p-3 rounded-lg border ${idx === selectedPermitIndex ? 'bg-blue-500/15 border-blue-400/40' : idx === 0 ? 'bg-blue-500/10 border-blue-500/30' : 'bg-white/5 border-white/10'}`}
                     >
                       <div>
                         <div className="text-white text-sm font-mono">{permit.permitNumber || '(no number)'}</div>
                         <div className="text-xs text-slate-400">{permit.schoolYear}</div>
+                        <div className="mt-1">
+                          {permit.permitUrl ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 text-[11px]">
+                              Uploaded File: Available
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded bg-rose-500/20 border border-rose-500/40 text-rose-200 text-[11px]">
+                              Uploaded File: No File
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex flex-wrap justify-end gap-1">
+                      <div className="flex flex-wrap justify-end gap-1 items-center">
                         {permit.permitLevels.kindergarten && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">K</span>}
                         {permit.permitLevels.elementary && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">E</span>}
                         {permit.permitLevels.highSchool && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">JHS</span>}
                         {permit.permitLevels.seniorHighSchool && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">SHS</span>}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPermitIndex(idx)}
+                          className={`ml-1 px-2 py-1 rounded text-xs border ${idx === selectedPermitIndex ? 'bg-blue-500/30 border-blue-400/60 text-blue-100' : 'bg-white/5 border-white/15 text-slate-200 hover:bg-white/10'}`}
+                        >
+                          View
+                        </button>
+                        {permit.permitUrl && (
+                          <a
+                            href={permit.permitUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-2 py-1 rounded text-xs border bg-blue-500/15 border-blue-500/40 text-blue-200 hover:bg-blue-500/25"
+                          >
+                            Open File
+                          </a>
+                        )}
                       </div>
                     </div>
                   ))}

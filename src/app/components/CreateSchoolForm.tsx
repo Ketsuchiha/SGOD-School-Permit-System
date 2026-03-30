@@ -23,6 +23,7 @@ const createEmptyPermit = (): GovernmentPermit => ({
   permitNumber: '',
   schoolYear: '2024-2025',
   issueDate: new Date().toISOString().split('T')[0],
+  permitUrl: '',
   permitLevels: createEmptyPermitLevels(),
   shsStrands: [],
 });
@@ -53,6 +54,36 @@ const inferNameFromFileName = (fileName: string) => {
     .replace(/[_-]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+};
+
+const getOcrEngineMeta = (engine: string) => {
+  const normalized = (engine || 'none').toLowerCase();
+  if (normalized === 'image-ocr') {
+    return {
+      label: 'Image OCR',
+      badgeClass: 'bg-emerald-500/20 border border-emerald-400/40 text-emerald-100',
+      description: 'Scanned image mode. Best for scanner-generated PDFs and photos.',
+    };
+  }
+  if (normalized === 'pdf-text') {
+    return {
+      label: 'PDF Text',
+      badgeClass: 'bg-blue-500/20 border border-blue-400/40 text-blue-100',
+      description: 'Selectable text mode. Best for digital PDFs with embedded text.',
+    };
+  }
+  if (normalized === 'pdf-recovery') {
+    return {
+      label: 'PDF Recovery',
+      badgeClass: 'bg-amber-500/20 border border-amber-400/40 text-amber-100',
+      description: 'Recovery mode. Partial extraction from difficult PDF content.',
+    };
+  }
+  return {
+    label: 'No OCR',
+    badgeClass: 'bg-rose-500/20 border border-rose-400/40 text-rose-100',
+    description: 'No usable OCR output detected for this upload.',
+  };
 };
 
 export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
@@ -143,6 +174,20 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
     return response.json() as Promise<{ lat: number; lng: number }>;
   };
 
+  const requestReverseGeocode = async (lat: number, lng: number) => {
+    const response = await fetch(`${apiBaseUrl}/api/reverse-geocode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lat, lng }),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return response.json() as Promise<{ address: string; lat: number; lng: number }>;
+  };
+
   const parseTargetPage = (): number | undefined => {
     const parsed = Number(targetPageInput);
     return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
@@ -176,6 +221,7 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
         permitNumber: ocrResult.permitNumber ?? '',
         schoolYear: ocrResult.schoolYear ?? '',
         issueDate: new Date().toISOString().split('T')[0],
+        permitUrl,
         permitLevels: ocrResult.permitLevels ?? createEmptyPermitLevels(),
         shsStrands: ocrResult.shsStrands ?? [],
       };
@@ -192,6 +238,7 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
           || inferSchoolYearFromPermitNumber(permit.permitNumber || fallbackPermit.permitNumber)
           || '2024-2025',
         issueDate: permit.issueDate ?? new Date().toISOString().split('T')[0],
+        permitUrl: permit.permitUrl || fallbackPermit.permitUrl,
         permitLevels: hasAnyPermitLevel(permit.permitLevels) ? permit.permitLevels : fallbackPermit.permitLevels,
         shsStrands: (permit.shsStrands && permit.shsStrands.length > 0) ? permit.shsStrands : fallbackPermit.shsStrands,
       }));
@@ -467,6 +514,13 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
                 {uploadError && <p className="mt-1.5 text-xs text-rose-300">{uploadError}</p>}
                 {ocrDiagnostics && (
                   <div className="mt-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-cyan-50">OCR Mode</span>
+                      <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${getOcrEngineMeta(ocrEngine).badgeClass}`}>
+                        {getOcrEngineMeta(ocrEngine).label}
+                      </span>
+                    </div>
+                    <div className="text-cyan-100/90">{getOcrEngineMeta(ocrEngine).description}</div>
                     <div>
                       OCR engine: <span className="font-semibold">{ocrEngine}</span>
                       {Array.isArray(ocrDiagnostics.selectedPages) && ocrDiagnostics.selectedPages.length > 0 && (
@@ -868,9 +922,15 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
           initialLat={newSchool.lat}
           initialLng={newSchool.lng}
           onClose={() => setShowLocationPicker(false)}
-          onConfirm={({ lat, lng }) => {
+          onConfirm={async ({ lat, lng }) => {
             setManualCoordinates(true);
-            setNewSchool((prev: School) => ({ ...prev, lat, lng }));
+            const reverse = await requestReverseGeocode(lat, lng);
+            setNewSchool((prev: School) => ({
+              ...prev,
+              lat,
+              lng,
+              address: (reverse?.address && reverse.address.trim()) ? reverse.address : prev.address,
+            }));
             setShowLocationPicker(false);
           }}
         />

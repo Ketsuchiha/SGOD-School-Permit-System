@@ -1,5 +1,5 @@
 import { School, SchoolStatus, SHSStrand, OCRPermitResult, GovernmentPermit, OCRDiagnostics } from '../data/mockData';
-import { X, Save, Upload, MapPin, Building2, FileText, AlertCircle, Trash2 } from 'lucide-react';
+import { X, Save, Upload, MapPin, Building2, FileText, AlertCircle, Trash2, Plus } from 'lucide-react';
 import { useEffect, useState, useRef } from 'react';
 import React from 'react';
 import { PDFViewer } from './PDFViewer';
@@ -9,6 +9,36 @@ import { ConfirmationModal } from './ConfirmationModal';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useAuditLog } from '../contexts/AuditLogContext';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+
+const getOcrEngineMeta = (engine: string) => {
+  const normalized = (engine || 'none').toLowerCase();
+  if (normalized === 'image-ocr') {
+    return {
+      label: 'Image OCR',
+      badgeClass: 'bg-emerald-500/20 border border-emerald-400/40 text-emerald-100',
+      description: 'Scanned image mode. Best for scanner-generated PDFs and photos.',
+    };
+  }
+  if (normalized === 'pdf-text') {
+    return {
+      label: 'PDF Text',
+      badgeClass: 'bg-blue-500/20 border border-blue-400/40 text-blue-100',
+      description: 'Selectable text mode. Best for digital PDFs with embedded text.',
+    };
+  }
+  if (normalized === 'pdf-recovery') {
+    return {
+      label: 'PDF Recovery',
+      badgeClass: 'bg-amber-500/20 border border-amber-400/40 text-amber-100',
+      description: 'Recovery mode. Partial extraction from difficult PDF content.',
+    };
+  }
+  return {
+    label: 'No OCR',
+    badgeClass: 'bg-rose-500/20 border border-rose-400/40 text-rose-100',
+    description: 'No usable OCR output detected for this upload.',
+  };
+};
 
 interface SplitViewEditorProps {
   school: School | null;
@@ -76,10 +106,25 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     return `${start}-${start + 1}`;
   };
 
+  const createBlankPermit = (): GovernmentPermit => ({
+    permitNumber: '',
+    schoolYear: '',
+    issueDate: new Date().toISOString().split('T')[0],
+    permitUrl: '',
+    permitLevels: {
+      kindergarten: false,
+      elementary: false,
+      highSchool: false,
+      seniorHighSchool: false,
+    },
+    shsStrands: [],
+  });
+
   const createPermitFromSchool = (source: School): GovernmentPermit => ({
     permitNumber: source.permitNumber || '',
     schoolYear: source.schoolYear || inferSchoolYearFromPermitNumber(source.permitNumber),
     issueDate: source.issueDate,
+    permitUrl: source.permitUrl || '',
     permitLevels: source.permitLevels || { kindergarten: false, elementary: false, highSchool: false, seniorHighSchool: false },
     shsStrands: source.shsStrands || [],
   });
@@ -99,6 +144,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
       permitNumber: primaryPermit.permitNumber || source.permitNumber,
       schoolYear: primaryPermit.schoolYear || source.schoolYear,
       issueDate: primaryPermit.issueDate || source.issueDate,
+      permitUrl: primaryPermit.permitUrl || source.permitUrl,
       permitLevels: primaryPermit.permitLevels || source.permitLevels,
       shsStrands: primaryPermit.shsStrands || source.shsStrands,
     };
@@ -131,6 +177,24 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
       if (prev === index) return Math.max(0, prev - 1);
       return prev;
     });
+  };
+
+  const addPermitManually = () => {
+    setEditedSchool((prev: School) => {
+      const existingPermits = getPermitList(prev).map((permit) => ({
+        ...permit,
+        permitLevels: { ...permit.permitLevels },
+        shsStrands: [...(permit.shsStrands || [])],
+      }));
+      const nextPermits = [...existingPermits, createBlankPermit()];
+      return syncPrimaryPermit(prev, nextPermits);
+    });
+
+    setActivePermitIndex(permitHistory.length);
+    window.setTimeout(() => {
+      permitDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      permitNumberInputRef.current?.focus();
+    }, 60);
   };
 
   const toggleStrand = (strand: SHSStrand) => {
@@ -190,6 +254,22 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     return response.json();
   };
 
+  const requestPermitUpload = async (file: File): Promise<{ url: string; storage: string; path: string }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${apiBaseUrl}/api/uploads/permit`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error('File upload failed');
+    }
+
+    return response.json();
+  };
+
   const requestGeocode = async (name: string, address: string) => {
     const response = await fetch(`${apiBaseUrl}/api/geocode`, {
       method: 'POST',
@@ -202,6 +282,20 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     }
 
     return response.json() as Promise<{ lat: number; lng: number }>;
+  };
+
+  const requestReverseGeocode = async (lat: number, lng: number) => {
+    const response = await fetch(`${apiBaseUrl}/api/reverse-geocode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lat, lng }),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return response.json() as Promise<{ address: string; lat: number; lng: number }>;
   };
 
   const handleGeocode = async () => {
@@ -250,7 +344,13 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     setOcrDiagnostics(null);
     setOcrExtractedPermits([]);
 
-    const permitUrl = await fileToDataUrl(file);
+    let permitUrl = '';
+    try {
+      const uploadResult = await requestPermitUpload(file);
+      permitUrl = uploadResult.url;
+    } catch {
+      permitUrl = await fileToDataUrl(file);
+    }
     setEditedSchool((prev) => ({ ...prev, permitUrl }));
 
     try {
@@ -262,6 +362,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
         permitNumber: ocrResult.permitNumber ?? '',
         schoolYear: ocrResult.schoolYear ?? '',
         issueDate: new Date().toISOString().split('T')[0],
+        permitUrl,
         permitLevels: ocrResult.permitLevels ?? { kindergarten: false, elementary: false, highSchool: false, seniorHighSchool: false },
         shsStrands: ocrResult.shsStrands ?? [],
       };
@@ -279,12 +380,32 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
           permitNumber,
           schoolYear: permit.schoolYear || fallbackPermit.schoolYear || inferSchoolYearFromPermitNumber(permitNumber) || '',
           issueDate: permit.issueDate || new Date().toISOString().split('T')[0],
+          permitUrl: permit.permitUrl || fallbackPermit.permitUrl,
           permitLevels,
           shsStrands: (permit.shsStrands && permit.shsStrands.length > 0) ? permit.shsStrands : (fallbackPermit.shsStrands ?? []),
         };
       });
 
-      const hasMeaningfulPermit = normalizedPermits.some((permit) =>
+      const diagnostics = ocrResult.ocrDiagnostics;
+      const currentPermitCount = (editedSchool.governmentPermits && editedSchool.governmentPermits.length > 0)
+        ? editedSchool.governmentPermits.length
+        : 1;
+      const shouldAutoAppendBlankPermit = Boolean(
+        (diagnostics?.totalPages ?? 0) >= 3
+        && (diagnostics?.confidence ?? 0) < 0.8
+        && normalizedPermits.length < 3
+        && currentPermitCount < 3
+      );
+
+      const permitsForEditing: GovernmentPermit[] = shouldAutoAppendBlankPermit
+        ? [...normalizedPermits, createBlankPermit()]
+        : normalizedPermits;
+
+      if (shouldAutoAppendBlankPermit) {
+        setUploadError('OCR may have missed one permit from this multi-page file. A blank permit entry was added for manual input.');
+      }
+
+      const hasMeaningfulPermit = permitsForEditing.some((permit) =>
         Boolean(
           permit.permitNumber ||
           permit.schoolYear ||
@@ -295,9 +416,9 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
         )
       );
 
-      setOcrExtractedPermits(hasMeaningfulPermit ? normalizedPermits : []);
+      setOcrExtractedPermits(hasMeaningfulPermit ? permitsForEditing : []);
 
-      const primaryPermit = normalizedPermits[0] ?? fallbackPermit;
+      const primaryPermit = permitsForEditing[0] ?? fallbackPermit;
 
       setEditedSchool((prev: School) => {
         const existing = prev.governmentPermits ?? [];
@@ -308,7 +429,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
           return `${permitNo}::${schoolYear}`;
         };
 
-        const incoming = hasMeaningfulPermit ? normalizedPermits : [];
+        const incoming = hasMeaningfulPermit ? permitsForEditing : [];
         const incomingKeys = new Set(incoming.map(makePermitKey));
         const preservedExisting = existing.filter((permit) => !incomingKeys.has(makePermitKey(permit)));
         const mergedHistory = [...incoming, ...preservedExisting];
@@ -326,7 +447,14 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
       });
 
       setActivePermitIndex(0);
-      addLog('permit_upload', `Renew permit uploaded for school "${editedSchool.name || school?.name || 'Unknown School'}".`);
+      
+      // Only log if meaningful permit data was extracted
+      if (hasMeaningfulPermit) {
+        addLog('permit_upload', `Renewed permit uploaded for school "${editedSchool.name || school?.name || 'Unknown School'}" - Permit: ${primaryPermit.permitNumber || 'Unknown'}, Year: ${primaryPermit.schoolYear || 'Unknown'}.`);
+      } else {
+        addLog('permit_upload', `Permit file uploaded but no data extracted. Manual entry required for school "${editedSchool.name || school?.name || 'Unknown School'}".`);
+        setUploadError('OCR could not extract permit data. Please fill in the fields manually.');
+      }
 
       setIsProcessing(false);
     } catch (error) {
@@ -678,10 +806,20 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
               {/* Permit History */}
               {permitHistory.length > 0 && (
                 <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-xl p-4">
-                  <h3 className="text-white font-semibold mb-3 flex items-center gap-2 text-sm">
-                    <FileText className="w-4 h-4" />
-                    Permit History ({permitHistory.length})
-                  </h3>
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <h3 className="text-white font-semibold flex items-center gap-2 text-sm">
+                      <FileText className="w-4 h-4" />
+                      Permit History ({permitHistory.length})
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={addPermitManually}
+                      className="px-3 py-1.5 rounded-lg text-xs border bg-blue-500/15 border-blue-500/40 text-blue-200 hover:bg-blue-500/25 flex items-center gap-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      Add Permit
+                    </button>
+                  </div>
                   <div className="space-y-2">
                     {permitHistory.map((permit, idx) => (
                       <div key={idx} className={`p-3 rounded-lg border ${idx === selectedPermitIndex ? 'bg-indigo-500/15 border-indigo-400/40' : idx === 0 ? 'bg-blue-500/10 border-blue-500/30' : 'bg-white/5 border-white/10'}`}>
@@ -741,6 +879,13 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
               )}
               {ocrDiagnostics && (
                 <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs text-cyan-100 space-y-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-cyan-50">OCR Mode</span>
+                    <span className={`px-2 py-0.5 rounded text-[11px] font-semibold ${getOcrEngineMeta(ocrEngine).badgeClass}`}>
+                      {getOcrEngineMeta(ocrEngine).label}
+                    </span>
+                  </div>
+                  <div className="text-cyan-100/90">{getOcrEngineMeta(ocrEngine).description}</div>
                   <div>
                     OCR engine: <span className="font-semibold">{ocrEngine}</span>
                     {Array.isArray(ocrDiagnostics.selectedPages) && ocrDiagnostics.selectedPages.length > 0 && (
@@ -825,9 +970,15 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
           initialLat={editedSchool.lat}
           initialLng={editedSchool.lng}
           onClose={() => setShowLocationPicker(false)}
-          onConfirm={({ lat, lng }) => {
+          onConfirm={async ({ lat, lng }) => {
             setManualCoordinates(true);
-            setEditedSchool((prev: School) => ({ ...prev, lat, lng }));
+            const reverse = await requestReverseGeocode(lat, lng);
+            setEditedSchool((prev: School) => ({
+              ...prev,
+              lat,
+              lng,
+              address: (reverse?.address && reverse.address.trim()) ? reverse.address : prev.address,
+            }));
             setShowLocationPicker(false);
           }}
         />
