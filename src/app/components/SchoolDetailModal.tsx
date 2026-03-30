@@ -74,7 +74,26 @@ export function SchoolDetailModal({ school, onClose }: SchoolDetailModalProps) {
       return match ? Number(match[1]) : -1;
     };
 
-    return merged.sort((a, b) => yearStart(b.schoolYear) - yearStart(a.schoolYear));
+    const sorted = merged.sort((a, b) => yearStart(b.schoolYear) - yearStart(a.schoolYear));
+
+    // Apply legacy URL fallback: only use school.permitUrl for the permit that matches the school's primary permit.
+    // For historical permits (2018, etc.) without their own URL, leave them empty rather than showing the wrong file.
+    const permitKey = (permitNumber: string, schoolYear: string) => `${permitNumber.trim().toLowerCase()}::${schoolYear.trim()}`;
+    const schoolPrimaryKey = permitKey(school.permitNumber || '', school.schoolYear || '');
+
+    const withLegacyUrl = sorted.map((permit) => {
+      if (permit.permitUrl) {
+        return permit;
+      }
+      const matchesSchoolPrimary = permitKey(permit.permitNumber || '', permit.schoolYear || '') === schoolPrimaryKey;
+      if (matchesSchoolPrimary && school.permitUrl) {
+        return { ...permit, permitUrl: school.permitUrl };
+      }
+      // Don't use school.permitUrl for mismatched permits—it could be from a different year/renewal.
+      return permit;
+    });
+
+    return withLegacyUrl;
   })();
   const [selectedPermitIndex, setSelectedPermitIndex] = useState(0);
   const currentPermit = permits[selectedPermitIndex] ?? permits[0] ?? null;

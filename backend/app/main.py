@@ -10,7 +10,7 @@ import io
 import json
 import sqlite3
 from pathlib import Path
-from .services.storage_service import store_permit_file
+from .services.storage_service import store_permit_file, delete_permit_file
 from .services.backup_service import create_backup, restore_backup, get_backup_info
 
 app = FastAPI(title="DepEd Cabuyao School Permit Registry API")
@@ -157,8 +157,45 @@ async def put_schools(payload: SchoolsBulkRequest):
         raise HTTPException(status_code=500, detail=f"Failed to save schools: {str(e)}")
 
 
+@app.delete("/api/schools/{school_id}/permits")
+async def delete_school_permits(school_id: str):
+    """Delete all permit files associated with a school."""
+    try:
+        schools = load_schools_from_db()
+        school = next((s for s in schools if s.get("id") == school_id), None)
+        
+        if not school:
+            raise HTTPException(status_code=404, detail="School not found")
+        
+        deleted_count = 0
+        
+        # Delete school-level permit URL
+        if school.get("permitUrl"):
+            # Extract file path from URL (e.g., "/api/files/permits/2019/filename.pdf" -> "permits/2019/filename.pdf")
+            permit_url = school["permitUrl"]
+            if "/api/files/" in permit_url:
+                file_path = permit_url.split("/api/files/", 1)[1]
+                if delete_permit_file(file_path, UPLOADS_DIR):
+                    deleted_count += 1
+        
+        # Delete all historical permit URLs
+        for permit in school.get("governmentPermits", []):
+            if permit.get("permitUrl"):
+                permit_url = permit["permitUrl"]
+                if "/api/files/" in permit_url:
+                    file_path = permit_url.split("/api/files/", 1)[1]
+                    if delete_permit_file(file_path, UPLOADS_DIR):
+                        deleted_count += 1
+        
+        return {"ok": True, "deleted": deleted_count}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete permit files: {str(e)}")
+
+
 @app.post("/api/uploads/permit")
-async def upload_permit_file(request: Request, file: UploadFile = File(...)):
+async def upload_permit_file(request: Request, file: UploadFile = File(...), schoolYear: str = Query("")):
     file_name = (file.filename or "").strip()
     lower_name = file_name.lower()
     if not lower_name.endswith((".pdf", ".jpg", ".jpeg", ".png")):
@@ -175,6 +212,7 @@ async def upload_permit_file(request: Request, file: UploadFile = File(...)):
             content_type=file.content_type or "application/octet-stream",
             uploads_dir=UPLOADS_DIR,
             backend_base_url=str(request.base_url),
+            school_year=schoolYear,
         )
         return result
     except Exception as exc:

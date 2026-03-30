@@ -21,13 +21,17 @@ const STRAND_LABELS: Record<string, string> = {
 };
 
 export function SchoolDetailsView({ school, onClose }: SchoolDetailsViewProps) {
-  const hasPdf = Boolean(school.permitUrl);
   const [showPdfViewer, setShowPdfViewer] = useState(false);
+  const [selectedPermitIndex, setSelectedPermitIndex] = useState(0);
   const permits = (() => {
+    const permitKey = (permitNumber: string, schoolYear: string) => `${permitNumber.trim().toLowerCase()}::${schoolYear.trim()}`;
+    const schoolPrimaryKey = permitKey(school.permitNumber || '', school.schoolYear || '');
+
     const normalized = (school.governmentPermits ?? []).map((permit) => ({
       permitNumber: permit.permitNumber || '',
       schoolYear: permit.schoolYear || '',
       issueDate: permit.issueDate || school.issueDate || '',
+      permitUrl: permit.permitUrl || '',
       permitLevels: {
         kindergarten: Boolean(permit.permitLevels?.kindergarten),
         elementary: Boolean(permit.permitLevels?.elementary),
@@ -41,6 +45,7 @@ export function SchoolDetailsView({ school, onClose }: SchoolDetailsViewProps) {
       permitNumber: school.permitNumber || '',
       schoolYear: school.schoolYear || '',
       issueDate: school.issueDate || '',
+      permitUrl: school.permitUrl || '',
       permitLevels: {
         kindergarten: Boolean(school.permitLevels?.kindergarten),
         elementary: Boolean(school.permitLevels?.elementary),
@@ -74,9 +79,27 @@ export function SchoolDetailsView({ school, onClose }: SchoolDetailsViewProps) {
       return match ? Number(match[1]) : -1;
     };
 
-    return merged.sort((a, b) => yearStart(b.schoolYear) - yearStart(a.schoolYear));
+    const sorted = merged.sort((a, b) => yearStart(b.schoolYear) - yearStart(a.schoolYear));
+
+    // Apply legacy URL fallback: only use school.permitUrl for the permit that matches the school's primary permit.
+    // For historical permits (2018, etc.) without their own URL, leave them empty rather than showing the wrong file.
+    const withLegacyUrl = sorted.map((permit) => {
+      if (permit.permitUrl) {
+        return permit;
+      }
+      const matchesSchoolPrimary = permitKey(permit.permitNumber || '', permit.schoolYear || '') === schoolPrimaryKey;
+      if (matchesSchoolPrimary && school.permitUrl) {
+        return { ...permit, permitUrl: school.permitUrl };
+      }
+      // Don't use school.permitUrl for mismatched permits—it could be from a different year/renewal.
+      return permit;
+    });
+
+    return withLegacyUrl;
   })();
-  const currentPermit = permits[0] ?? null;
+  const currentPermit = permits[selectedPermitIndex] ?? permits[0] ?? null;
+  const currentPermitUrl = currentPermit?.permitUrl || '';
+  const hasPdf = Boolean(currentPermitUrl);
 
   return (
     <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-2">
@@ -153,14 +176,6 @@ export function SchoolDetailsView({ school, onClose }: SchoolDetailsViewProps) {
                     <label className="text-xs text-slate-400 mb-1 block">Complete Address</label>
                     <div className="text-white">{school.address || '—'}</div>
                   </div>
-                  <div>
-                    <label className="text-xs text-slate-400 mb-1 block">Barangay</label>
-                    <div className="text-white">{school.barangay || '—'}</div>
-                  </div>
-                  <div>
-                    <label className="text-xs text-slate-400 mb-1 block">District</label>
-                    <div className="text-white">{school.district || '—'}</div>
-                  </div>
                   <div className="pt-2 border-t border-white/10">
                     <label className="text-xs text-slate-400 mb-1 block">Coordinates</label>
                     <div className="text-white font-mono text-sm">{school.lat.toFixed(6)}, {school.lng.toFixed(6)}</div>
@@ -203,10 +218,6 @@ export function SchoolDetailsView({ school, onClose }: SchoolDetailsViewProps) {
                     <div>
                       <label className="text-xs text-slate-400 mb-1 block">School Year</label>
                       <div className="text-white">{currentPermit.schoolYear || '—'}</div>
-                    </div>
-                    <div>
-                      <label className="text-xs text-slate-400 mb-1 block">Issue Date</label>
-                      <div className="text-white">{currentPermit.issueDate || school.issueDate || '—'}</div>
                     </div>
 
                     {/* Permitted Levels */}
@@ -257,7 +268,9 @@ export function SchoolDetailsView({ school, onClose }: SchoolDetailsViewProps) {
                 </h3>
                 {hasPdf ? (
                   <div className="space-y-3">
-                    <p className="text-sm text-slate-300">Open the permit file when needed.</p>
+                    <p className="text-sm text-slate-300">
+                      Open the selected permit file{currentPermit?.schoolYear ? ` (${currentPermit.schoolYear})` : ''} when needed.
+                    </p>
                     <button
                       type="button"
                       onClick={() => setShowPdfViewer(true)}
@@ -272,7 +285,7 @@ export function SchoolDetailsView({ school, onClose }: SchoolDetailsViewProps) {
                     <AlertCircle className="w-5 h-5 text-amber-500" />
                     <div>
                       <p className="text-sm">No Permit Document</p>
-                      <p className="text-xs text-slate-500">PDF file not currently available for this school</p>
+                      <p className="text-xs text-slate-500">PDF file not currently available for the selected permit</p>
                     </div>
                   </div>
                 )}
@@ -295,11 +308,28 @@ export function SchoolDetailsView({ school, onClose }: SchoolDetailsViewProps) {
                           <div className="text-white text-sm font-mono">{permit.permitNumber || '(no number)'}</div>
                           <div className="text-xs text-slate-400">{permit.schoolYear}</div>
                         </div>
-                        <div className="flex flex-wrap justify-end gap-1">
+                        <div className="flex flex-wrap justify-end gap-1 items-center">
                           {permit.permitLevels.kindergarten && <span className="text-xs px-2 py-1 rounded bg-white/10 text-slate-300">K</span>}
                           {permit.permitLevels.elementary && <span className="text-xs px-2 py-1 rounded bg-white/10 text-slate-300">E</span>}
                           {permit.permitLevels.highSchool && <span className="text-xs px-2 py-1 rounded bg-white/10 text-slate-300">JHS</span>}
                           {permit.permitLevels.seniorHighSchool && <span className="text-xs px-2 py-1 rounded bg-white/10 text-slate-300">SHS</span>}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPermitIndex(idx)}
+                            className={`ml-1 px-2 py-1 rounded text-xs border ${idx === selectedPermitIndex ? 'bg-blue-500/30 border-blue-400/60 text-blue-100' : 'bg-white/5 border-white/15 text-slate-200 hover:bg-white/10'}`}
+                          >
+                            View
+                          </button>
+                          {permit.permitUrl && (
+                            <a
+                              href={permit.permitUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="px-2 py-1 rounded text-xs border bg-blue-500/15 border-blue-500/40 text-blue-200 hover:bg-blue-500/25"
+                            >
+                              Open File
+                            </a>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -341,7 +371,7 @@ export function SchoolDetailsView({ school, onClose }: SchoolDetailsViewProps) {
             </div>
             <div className="flex-1 min-h-0 bg-slate-950/50">
               <PDFViewer
-                permitUrl={school.permitUrl}
+                permitUrl={currentPermitUrl}
                 permitNumber={currentPermit?.permitNumber || school.permitNumber || 'Permit'}
               />
             </div>

@@ -168,6 +168,22 @@ const getPermitLevelBadgeClass = (level: PermitLevelFilter) => {
   }
 };
 
+const sortableSchoolName = (name?: string) => {
+  return (name || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/^[^A-Za-z0-9]+/, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+};
+
+const schoolNameCollator = new Intl.Collator(undefined, {
+  sensitivity: 'base',
+  ignorePunctuation: true,
+  numeric: true,
+});
+
 export function SchoolDirectory() {
   const navigate = useNavigate();
   const { activeSchools } = useSchools();
@@ -204,7 +220,13 @@ export function SchoolDirectory() {
       && schoolMatchesYear(school, schoolYearFilter)
       && schoolHasPermitLevel(school, permitLevelFilter)
     )
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    .sort((a, b) => {
+      const byName = schoolNameCollator.compare(sortableSchoolName(a.name), sortableSchoolName(b.name));
+      if (byName !== 0) {
+        return byName;
+      }
+      return schoolNameCollator.compare((a.permitNumber || '').trim(), (b.permitNumber || '').trim());
+    });
 
   return (
     <div className="p-8">

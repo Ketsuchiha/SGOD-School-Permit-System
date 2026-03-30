@@ -144,17 +144,31 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
     return response.json();
   };
 
-  const requestPermitUpload = async (file: File): Promise<{ url: string; storage: string; path: string }> => {
+  const requestPermitUpload = async (file: File, schoolYear: string = ""): Promise<{ url: string; storage: string; path: string }> => {
     const formData = new FormData();
     formData.append('file', file);
+    // Pass the school year so files are organized by year in the uploads folder
+    const params = new URLSearchParams();
+    if (schoolYear.trim()) {
+      params.append('schoolYear', schoolYear.trim());
+    }
 
-    const response = await fetch(`${apiBaseUrl}/api/uploads/permit`, {
+    const response = await fetch(`${apiBaseUrl}/api/uploads/permit${params.toString() ? '?' + params.toString() : ''}`, {
       method: 'POST',
       body: formData,
     });
 
     if (!response.ok) {
-      throw new Error('File upload failed');
+      let detail = 'File upload failed';
+      try {
+        const payload = await response.json();
+        if (payload?.detail) {
+          detail = String(payload.detail);
+        }
+      } catch {
+        // Keep default detail when response body isn't JSON.
+      }
+      throw new Error(detail);
     }
 
     return response.json();
@@ -202,12 +216,13 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
 
     let permitUrl = '';
     try {
-      const uploadResult = await requestPermitUpload(file);
+      // Pass the school year so the file is organized in the year's folder
+      const uploadResult = await requestPermitUpload(file, newSchool.schoolYear);
       permitUrl = uploadResult.url;
       setNewSchool((prev) => ({ ...prev, permitUrl }));
-    } catch {
+    } catch (error) {
       setIsProcessing(false);
-      setUploadError('File upload failed. Please check backend storage settings and try again.');
+      setUploadError(error instanceof Error ? error.message : 'File upload failed. Please check backend and try again.');
       return;
     }
 

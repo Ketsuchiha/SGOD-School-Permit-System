@@ -254,17 +254,31 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     return response.json();
   };
 
-  const requestPermitUpload = async (file: File): Promise<{ url: string; storage: string; path: string }> => {
+  const requestPermitUpload = async (file: File, schoolYear: string = ""): Promise<{ url: string; storage: string; path: string }> => {
     const formData = new FormData();
     formData.append('file', file);
+    // Pass the school year so files are organized by year in the uploads folder
+    const params = new URLSearchParams();
+    if (schoolYear.trim()) {
+      params.append('schoolYear', schoolYear.trim());
+    }
 
-    const response = await fetch(`${apiBaseUrl}/api/uploads/permit`, {
+    const response = await fetch(`${apiBaseUrl}/api/uploads/permit${params.toString() ? '?' + params.toString() : ''}`, {
       method: 'POST',
       body: formData,
     });
 
     if (!response.ok) {
-      throw new Error('File upload failed');
+      let detail = 'File upload failed';
+      try {
+        const payload = await response.json();
+        if (payload?.detail) {
+          detail = String(payload.detail);
+        }
+      } catch {
+        // Keep default detail when response body isn't JSON.
+      }
+      throw new Error(detail);
     }
 
     return response.json();
@@ -346,7 +360,8 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
 
     let permitUrl = '';
     try {
-      const uploadResult = await requestPermitUpload(file);
+      // Pass the school year so the file is organized in the year's folder
+      const uploadResult = await requestPermitUpload(file, editedSchool.schoolYear);
       permitUrl = uploadResult.url;
     } catch {
       permitUrl = await fileToDataUrl(file);
@@ -422,6 +437,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
 
       setEditedSchool((prev: School) => {
         const existing = prev.governmentPermits ?? [];
+        const oldPrimaryUrl = prev.permitUrl; // Save the old school-level URL before overwriting
 
         const makePermitKey = (permit: GovernmentPermit) => {
           const permitNo = (permit.permitNumber || '').trim().toLowerCase();
@@ -431,7 +447,29 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
 
         const incoming = hasMeaningfulPermit ? permitsForEditing : [];
         const incomingKeys = new Set(incoming.map(makePermitKey));
+        
+        // Before discarding replaced permits, preserve their URL:
+        // If an existing permit is being replaced and doesn't have its own URL,
+        // assign the old school-level URL to it for backward compatibility.
+        const replacedPermits = existing.filter((permit) => incomingKeys.has(makePermitKey(permit)));
+        replacedPermits.forEach((replacedPermit) => {
+          if (!replacedPermit.permitUrl && oldPrimaryUrl) {
+            replacedPermit.permitUrl = oldPrimaryUrl;
+          }
+        });
+
         const preservedExisting = existing.filter((permit) => !incomingKeys.has(makePermitKey(permit)));
+        
+        // Also check: if the old school's primary permit exists in history but doesn't have a URL,
+        // assign the old school-level URL to it (for 2018 -> 2019 renewal case).
+        const oldPrimaryKey = makePermitKey(prev.permitNumber || '', prev.schoolYear || '');
+        if (oldPrimaryUrl && oldPrimaryKey && oldPrimaryKey !== makePermitKey(primaryPermit.permitNumber || '', primaryPermit.schoolYear || '')) {
+          const historicalOldPrimary = preservedExisting.find((p) => makePermitKey(p.permitNumber || '', p.schoolYear || '') === oldPrimaryKey);
+          if (historicalOldPrimary && !historicalOldPrimary.permitUrl) {
+            historicalOldPrimary.permitUrl = oldPrimaryUrl;
+          }
+        }
+
         const mergedHistory = [...incoming, ...preservedExisting];
 
         return {

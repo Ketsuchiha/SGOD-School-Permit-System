@@ -13,6 +13,8 @@ export function TrashBin() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [schoolToDelete, setSchoolToDelete] = useState<string | null>(null);
 
+  const apiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
+
   const handleRestore = (id: string) => {
     setSchools((prevSchools) =>
       prevSchools.map((school) =>
@@ -32,9 +34,27 @@ export function TrashBin() {
     setIsModalOpen(false);
   };
 
-  const handlePermanentDelete = () => {
+  const handlePermanentDelete = async () => {
     if (schoolToDelete) {
-      setSchools((prevSchools) => prevSchools.filter((school) => school.id !== schoolToDelete));
+      try {
+        // Call backend to delete permit files
+        const deleteResponse = await fetch(`${apiBaseUrl}/api/schools/${schoolToDelete}/permits`, {
+          method: 'DELETE',
+        });
+
+        if (!deleteResponse.ok) {
+          console.warn('Failed to delete permit files, proceeding with school deletion');
+        }
+
+        // Delete school from local state
+        setSchools((prevSchools) => prevSchools.filter((school) => school.id !== schoolToDelete));
+        addNotification('School Permanently Deleted', 'The school and its permit files have been permanently deleted.');
+      } catch (error) {
+        console.error('Error deleting permit files:', error);
+        // Still delete the school even if file deletion fails
+        setSchools((prevSchools) => prevSchools.filter((school) => school.id !== schoolToDelete));
+        addNotification('School Deleted', 'The school has been deleted (some files may remain).', 'warning');
+      }
       closeConfirmationModal();
     }
   };
