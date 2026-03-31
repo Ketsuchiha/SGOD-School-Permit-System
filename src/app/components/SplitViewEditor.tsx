@@ -106,11 +106,11 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     return `${start}-${start + 1}`;
   };
 
-  const createBlankPermit = (): GovernmentPermit => ({
+  const createBlankPermit = (permitUrl: string = ''): GovernmentPermit => ({
     permitNumber: '',
     schoolYear: '',
     issueDate: new Date().toISOString().split('T')[0],
-    permitUrl: '',
+    permitUrl,
     permitLevels: {
       kindergarten: false,
       elementary: false,
@@ -201,7 +201,9 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
         permitLevels: { ...permit.permitLevels },
         shsStrands: [...(permit.shsStrands || [])],
       }));
-      const nextPermits = [...existingPermits, createBlankPermit()];
+      const sourcePermit = existingPermits[selectedPermitIndex] || existingPermits[0];
+      const inheritedPermitUrl = sourcePermit?.permitUrl || prev.permitUrl || '';
+      const nextPermits = [...existingPermits, createBlankPermit(inheritedPermitUrl)];
       return syncPrimaryPermit(prev, nextPermits);
     });
 
@@ -464,7 +466,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
       );
 
       const permitsForEditing: GovernmentPermit[] = shouldAutoAppendBlankPermit
-        ? [...normalizedPermits, createBlankPermit()]
+        ? [...normalizedPermits, createBlankPermit(permitUrl)]
         : normalizedPermits;
 
       if (shouldAutoAppendBlankPermit) {
@@ -607,11 +609,26 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
         {/* Split View Content */}
         <div className="flex-1 flex overflow-hidden">
           {/* Left: PDF Viewer (35%) */}
-          <div className="w-[35%] p-4 overflow-hidden">
-            <PDFViewer 
-              permitUrl={editedSchool.permitUrl} 
-              permitNumber={editedSchool.permitNumber || 'New Permit'}
-            />
+          <div className="w-[35%] p-4 overflow-hidden flex flex-col">
+            <div className="text-xs text-slate-400 mb-2">
+              {currentPermit.permitUrl ? (
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                  Viewing: {currentPermit.permitNumber || 'Permit'} ({currentPermit.schoolYear})
+                </span>
+              ) : (
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                  No file attached
+                </span>
+              )}
+            </div>
+            <div className="flex-1 overflow-hidden">
+              <PDFViewer 
+                permitUrl={currentPermit.permitUrl} 
+                permitNumber={currentPermit.permitNumber || 'New Permit'}
+              />
+            </div>
           </div>
 
           {/* Right: Editable Form (65%) */}
@@ -911,27 +928,42 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                   </div>
                   <div className="space-y-2">
                     {permitHistory.map((permit, idx) => (
-                      <div key={idx} className={`p-3 rounded-lg border ${idx === selectedPermitIndex ? 'bg-indigo-500/15 border-indigo-400/40' : idx === 0 ? 'bg-blue-500/10 border-blue-500/30' : 'bg-white/5 border-white/10'}`}>
+                      <div key={idx} className={`p-3 rounded-lg border cursor-pointer transition-all ${idx === selectedPermitIndex ? 'bg-indigo-500/15 border-indigo-400/40 ring-2 ring-indigo-400/30' : idx === 0 ? 'bg-blue-500/10 border-blue-500/30 hover:bg-blue-500/15' : 'bg-white/5 border-white/10 hover:bg-white/10'}`}
+                      onClick={() => handleSelectPermitForEditing(idx)}>
                         <div className="flex items-center justify-between gap-2">
-                          <div>
-                            <div className="text-white text-sm font-mono">{permit.permitNumber || '(no number)'}</div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <div className="text-white text-sm font-mono truncate">{permit.permitNumber || '(no number)'}</div>
+                              {permit.permitUrl && (
+                                <span className="text-xs px-1.5 py-0.5 rounded bg-green-500/20 border border-green-500/40 text-green-300 whitespace-nowrap">✓ File</span>
+                              )}
+                              {!permit.permitUrl && (
+                                <span className="text-xs px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 whitespace-nowrap">No File</span>
+                              )}
+                            </div>
                             <div className="text-xs text-slate-400">{permit.schoolYear}</div>
                           </div>
-                          <div className="flex flex-wrap justify-end gap-1 items-center">
+                          <div className="flex flex-wrap justify-end gap-1 items-center flex-shrink-0">
                             {permit.permitLevels.kindergarten && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">K</span>}
                             {permit.permitLevels.elementary && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">E</span>}
                             {permit.permitLevels.highSchool && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">JHS</span>}
                             {permit.permitLevels.seniorHighSchool && <span className="text-xs px-1.5 py-0.5 rounded bg-white/10 text-slate-300">SHS</span>}
                             <button
                               type="button"
-                              onClick={() => handleSelectPermitForEditing(idx)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectPermitForEditing(idx);
+                              }}
                               className={`ml-2 px-2 py-1 rounded text-xs border transition-colors ${idx === selectedPermitIndex ? 'bg-indigo-500/30 border-indigo-400/60 text-indigo-100' : 'bg-white/5 border-white/15 text-slate-200 hover:bg-white/10'}`}
                             >
                               Edit
                             </button>
                             <button
                               type="button"
-                              onClick={() => removePermitAt(idx)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removePermitAt(idx);
+                              }}
                               disabled={permitHistory.length === 1}
                               className="px-2 py-1 rounded text-xs border bg-rose-500/15 border-rose-500/40 text-rose-200 hover:bg-rose-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
@@ -939,7 +971,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
                             </button>
                           </div>
                         </div>
-                        {idx === selectedPermitIndex && <div className="mt-1 text-xs text-indigo-200">Editing this permit</div>}
+                        {idx === selectedPermitIndex && <div className="mt-2 text-xs text-indigo-200">📄 Click to view file | Edit details | Delete permit</div>}
                         {idx === 0 && <div className="mt-1 text-xs text-blue-300">● Current permit</div>}
                       </div>
                     ))}
