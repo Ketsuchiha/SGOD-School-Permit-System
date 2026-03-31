@@ -136,17 +136,32 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     return [createPermitFromSchool(source)];
   };
 
+  const hasPermitNumber = (permit?: GovernmentPermit) => Boolean((permit?.permitNumber || '').trim());
+
+  const getAllPermitUrls = (source: School): string[] => {
+    const urls = new Set<string>();
+    if (source.permitUrl) {
+      urls.add(source.permitUrl);
+    }
+    (source.governmentPermits || []).forEach((permit) => {
+      if (permit.permitUrl) {
+        urls.add(permit.permitUrl);
+      }
+    });
+    return Array.from(urls);
+  };
+
   const syncPrimaryPermit = (source: School, permits: GovernmentPermit[]): School => {
     const primaryPermit = permits[0] || createPermitFromSchool(source);
     return {
       ...source,
       governmentPermits: permits,
-      permitNumber: primaryPermit.permitNumber || source.permitNumber,
-      schoolYear: primaryPermit.schoolYear || source.schoolYear,
+      permitNumber: primaryPermit.permitNumber || '',
+      schoolYear: primaryPermit.schoolYear || '',
       issueDate: primaryPermit.issueDate || source.issueDate,
-      permitUrl: primaryPermit.permitUrl || source.permitUrl,
-      permitLevels: primaryPermit.permitLevels || source.permitLevels,
-      shsStrands: primaryPermit.shsStrands || source.shsStrands,
+      permitUrl: primaryPermit.permitUrl || '',
+      permitLevels: primaryPermit.permitLevels || { kindergarten: false, elementary: false, highSchool: false, seniorHighSchool: false },
+      shsStrands: primaryPermit.shsStrands || [],
     };
   };
 
@@ -220,11 +235,47 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     }, 40);
   };
 
-  const handleSave = () => {
-    onSave({
-      ...editedSchool,
-      logicType: manualOverride ? 'manual' : 'ocr',
-    });
+  const handleSave = async () => {
+    const previousUrls = school ? getAllPermitUrls(school) : [];
+
+    const cleanedPermits = getPermitList(editedSchool)
+      .map((permit) => ({
+        ...permit,
+        permitNumber: (permit.permitNumber || '').trim(),
+        schoolYear: (permit.schoolYear || '').trim(),
+      }))
+      .filter((permit) => hasPermitNumber(permit));
+
+    const normalizedPermits = cleanedPermits.length > 0
+      ? cleanedPermits
+      : [createBlankPermit()];
+
+    const normalizedSchool = syncPrimaryPermit(
+      {
+        ...editedSchool,
+        logicType: manualOverride ? 'manual' : 'ocr',
+      },
+      normalizedPermits,
+    );
+
+    const nextUrls = getAllPermitUrls(normalizedSchool);
+    const urlsToDelete = previousUrls.filter((url) => url && !nextUrls.includes(url) && url.includes('/api/files/'));
+
+    if (urlsToDelete.length > 0) {
+      await Promise.all(urlsToDelete.map(async (permitUrl) => {
+        try {
+          await fetch(`${apiBaseUrl}/api/uploads/permit/delete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ permitUrl }),
+          });
+        } catch {
+          // Keep save flow successful even if file cleanup fails.
+        }
+      }));
+    }
+
+    onSave(normalizedSchool);
     onClose();
   };
 

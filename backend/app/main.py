@@ -143,6 +143,10 @@ class SchoolsBulkRequest(BaseModel):
     schools: list[dict] = []
 
 
+class DeletePermitFileRequest(BaseModel):
+    permitUrl: str
+
+
 @app.get("/api/schools")
 async def get_schools():
     return {"schools": load_schools_from_db()}
@@ -192,6 +196,26 @@ async def delete_school_permits(school_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete permit files: {str(e)}")
+
+
+@app.post("/api/uploads/permit/delete")
+async def delete_single_permit_file(payload: DeletePermitFileRequest):
+    """Delete a permit file by URL when a permit entry is removed/cleared."""
+    try:
+        permit_url = (payload.permitUrl or "").strip()
+        if not permit_url:
+            raise HTTPException(status_code=400, detail="permitUrl is required")
+
+        if "/api/files/" not in permit_url:
+            return {"ok": False, "deleted": False, "reason": "not-local-file-url"}
+
+        file_path = permit_url.split("/api/files/", 1)[1]
+        deleted = delete_permit_file(file_path, UPLOADS_DIR)
+        return {"ok": True, "deleted": deleted, "path": file_path}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete permit file: {str(e)}")
 
 
 @app.post("/api/uploads/permit")

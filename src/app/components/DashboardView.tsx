@@ -10,7 +10,7 @@ import { SplitViewEditor } from './SplitViewEditor';
 import { CreateSchoolForm } from './CreateSchoolForm';
 import { ActionBar } from './ActionBar';
 import { Sidebar } from './Sidebar';
-import { Building2, Baby, BookOpen, GraduationCap, School as SchoolIcon, Search, Newspaper } from 'lucide-react';
+import { Building2, Baby, BookOpen, GraduationCap, School as SchoolIcon, Search, Newspaper, FileText } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 export function DashboardView() {
@@ -27,19 +27,43 @@ export function DashboardView() {
   const [isExporting, setIsExporting] = useState(false);
   const [schoolSearchInput, setSchoolSearchInput] = useState('');
 
-  const schoolHasPermitLevel = (school: School, level: keyof School['permitLevels']) => {
-    const permitHistory = school.governmentPermits || [];
-    if (permitHistory.length > 0) {
-      return permitHistory.some((permit) => Boolean(permit?.permitLevels?.[level]));
+  const getPermitEntries = (school: School) => {
+    const history = (school.governmentPermits ?? []).filter((permit) => {
+      return Boolean(
+        permit?.permitNumber
+        || permit?.schoolYear
+        || permit?.permitLevels?.kindergarten
+        || permit?.permitLevels?.elementary
+        || permit?.permitLevels?.highSchool
+        || permit?.permitLevels?.seniorHighSchool
+      );
+    });
+
+    if (history.length > 0) {
+      return history;
     }
-    return Boolean(school.permitLevels?.[level]);
+
+    return [{
+      permitNumber: school.permitNumber,
+      schoolYear: school.schoolYear,
+      permitLevels: school.permitLevels,
+    }];
+  };
+
+  const countPermitsByLevel = (level: keyof School['permitLevels']) => {
+    return activeSchools.reduce((count, school: School) => {
+      const permits = getPermitEntries(school);
+      const levelCount = permits.filter((permit) => Boolean(permit?.permitLevels?.[level])).length;
+      return count + levelCount;
+    }, 0);
   };
 
   const totalSchools = activeSchools.length;
-  const kindergartenPermits = activeSchools.filter((school: School) => schoolHasPermitLevel(school, 'kindergarten')).length;
-  const elementaryPermits = activeSchools.filter((school: School) => schoolHasPermitLevel(school, 'elementary')).length;
-  const highSchoolPermits = activeSchools.filter((school: School) => schoolHasPermitLevel(school, 'highSchool')).length;
-  const seniorHighSchoolPermits = activeSchools.filter((school: School) => schoolHasPermitLevel(school, 'seniorHighSchool')).length;
+  const totalPermitRecords = activeSchools.reduce((count, school: School) => count + getPermitEntries(school).length, 0);
+  const kindergartenPermits = countPermitsByLevel('kindergarten');
+  const elementaryPermits = countPermitsByLevel('elementary');
+  const highSchoolPermits = countPermitsByLevel('highSchool');
+  const seniorHighSchoolPermits = countPermitsByLevel('seniorHighSchool');
 
   const availableSchoolYears = useMemo(() => {
     const years = new Set<string>();
@@ -185,7 +209,7 @@ export function DashboardView() {
         </div>
 
         {/* Status Analytics */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-6 mb-8">
           <MetricCard
             title="Total Schools"
             value={totalSchools}
@@ -195,12 +219,20 @@ export function DashboardView() {
             animationIndex={0}
           />
           <MetricCard
+            title="Total Permit Records"
+            value={totalPermitRecords}
+            icon={FileText}
+            trend={[60, 66, 72, 79, 84, 90, 95, 101, 108]}
+            color="#22c55e"
+            animationIndex={1}
+          />
+          <MetricCard
             title="Kindergarten Permits"
             value={kindergartenPermits}
             icon={Baby}
             trend={[35, 38, 40, 42, 45, 48, 50, 52, 54]}
             color="#10b981"
-            animationIndex={1}
+            animationIndex={2}
           />
           <MetricCard
             title="Elementary Permits"
@@ -208,7 +240,7 @@ export function DashboardView() {
             icon={BookOpen}
             trend={[40, 42, 44, 46, 48, 50, 52, 54, 56]}
             color="#f59e0b"
-            animationIndex={2}
+            animationIndex={3}
           />
           <MetricCard
             title="High School Permits"
@@ -216,7 +248,7 @@ export function DashboardView() {
             icon={GraduationCap}
             trend={[20, 22, 24, 26, 28, 30, 32, 34, 36]}
             color="#8b5cf6"
-            animationIndex={3}
+            animationIndex={4}
           />
           <MetricCard
             title="Senior High School"
@@ -224,7 +256,7 @@ export function DashboardView() {
             icon={SchoolIcon}
             trend={[15, 17, 19, 21, 23, 25, 27, 29, 31]}
             color="#ec4899"
-            animationIndex={4}
+            animationIndex={5}
           />
         </div>
 
