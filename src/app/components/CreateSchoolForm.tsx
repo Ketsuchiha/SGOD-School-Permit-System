@@ -35,6 +35,29 @@ const hasAnyPermitLevel = (levels?: PermitLevel) => {
   return levels.kindergarten || levels.elementary || levels.highSchool || levels.seniorHighSchool;
 };
 
+const inferPermitLevelsFromPermitNumber = (permitNumber?: string): PermitLevel => {
+  const normalized = (permitNumber || '').trim().toUpperCase().replace(/\s+/g, '');
+  const levels = createEmptyPermitLevels();
+
+  if (!normalized) {
+    return levels;
+  }
+
+  const code = normalized.match(/^([A-Z]+)/)?.[1] || '';
+
+  if (code.startsWith('SHS')) {
+    levels.seniorHighSchool = true;
+  } else if (code.startsWith('K')) {
+    levels.kindergarten = true;
+  } else if (code.startsWith('E')) {
+    levels.elementary = true;
+  } else if (code.startsWith('J') || code.startsWith('S') || normalized.includes('JHS')) {
+    levels.highSchool = true;
+  }
+
+  return levels;
+};
+
 const inferSchoolYearFromPermitNumber = (permitNumber?: string) => {
   if (!permitNumber) return '';
   const match = permitNumber.match(/\b(20\d{2})\b/);
@@ -254,7 +277,13 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
           || '2024-2025',
         issueDate: permit.issueDate ?? new Date().toISOString().split('T')[0],
         permitUrl: permit.permitUrl || fallbackPermit.permitUrl,
-        permitLevels: hasAnyPermitLevel(permit.permitLevels) ? permit.permitLevels : fallbackPermit.permitLevels,
+        permitLevels: (() => {
+          const inferredLevels = inferPermitLevelsFromPermitNumber(permit.permitNumber || fallbackPermit.permitNumber);
+          if (hasAnyPermitLevel(inferredLevels)) {
+            return inferredLevels;
+          }
+          return hasAnyPermitLevel(permit.permitLevels) ? permit.permitLevels : fallbackPermit.permitLevels;
+        })(),
         shsStrands: (permit.shsStrands && permit.shsStrands.length > 0) ? permit.shsStrands : fallbackPermit.shsStrands,
       }));
 
@@ -711,11 +740,19 @@ export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
                             setNewSchool((prev) => {
                               const permits = prev.governmentPermits ? [...prev.governmentPermits] : [createEmptyPermit()];
                               const target = permits[permitIndex] || createEmptyPermit();
-                              permits[permitIndex] = { ...target, permitNumber: value };
+                              const inferredLevels = inferPermitLevelsFromPermitNumber(value);
+                              permits[permitIndex] = {
+                                ...target,
+                                permitNumber: value,
+                                permitLevels: inferredLevels,
+                                shsStrands: inferredLevels.seniorHighSchool ? (target.shsStrands || []) : [],
+                              };
                               return {
                                 ...prev,
                                 governmentPermits: permits,
                                 permitNumber: permitIndex === 0 ? value : prev.permitNumber,
+                                permitLevels: permitIndex === 0 ? inferredLevels : prev.permitLevels,
+                                shsStrands: permitIndex === 0 && inferredLevels.seniorHighSchool ? (target.shsStrands || []) : (permitIndex === 0 ? [] : prev.shsStrands),
                               };
                             });
                           }}

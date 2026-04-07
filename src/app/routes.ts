@@ -12,6 +12,7 @@ export const router = createBrowserRouter([
     Component: DashboardLayout,
     children: [
       { index: true, Component: DashboardView },
+      { path: "schools/:schoolId/edit", Component: DashboardView },
       { path: "map", Component: MapView },
       { path: "directory", Component: SchoolDirectory },
       { path: "trash", Component: TrashBin },

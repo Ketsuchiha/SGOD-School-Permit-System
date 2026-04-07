@@ -420,7 +420,7 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
             compact = compact.replace("\u2013", "-").replace("\u2014", "-")
 
             # Canonical school-level permit codes.
-            school_match = re.match(r"^(SHS|E|J|K)-(\d{2,6})$", compact)
+            school_match = re.match(r"^(SHS|S|E|J|K)-(\d{2,6})$", compact)
             if school_match:
                 return f"{school_match.group(1)}-{school_match.group(2)}"
 
@@ -434,7 +434,7 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
         def extract_school_permit_codes(source: str) -> list[str]:
             return [
                 f"{prefix.upper()}-{number}"
-                for prefix, number in re.findall(r"\b(SHS|E|J|K)\s*[-\u2013\u2014]\s*(\d{2,6})\b", source, re.IGNORECASE)
+                for prefix, number in re.findall(r"\b(SHS|S|E|J|K)\s*[-\u2013\u2014]\s*(\d{2,6})\b", source, re.IGNORECASE)
             ]
         
         def extract_gp_permits(source: str) -> list[str]:
@@ -449,6 +449,29 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
                 if match:
                     return clean_value(match.group(1))
             return ""
+
+        def infer_permit_levels_from_code(permit_code: str) -> dict[str, bool]:
+            levels = {
+                "kindergarten": False,
+                "elementary": False,
+                "highSchool": False,
+                "seniorHighSchool": False,
+            }
+            normalized_code = normalize_permit_code(permit_code)
+            if not normalized_code:
+                return levels
+
+            prefix = normalized_code.split("-", 1)[0].upper()
+            if prefix == "SHS":
+                levels["seniorHighSchool"] = True
+            elif prefix == "K":
+                levels["kindergarten"] = True
+            elif prefix == "E":
+                levels["elementary"] = True
+            elif prefix in {"J", "S"}:
+                levels["highSchool"] = True
+
+            return levels
 
         name = find(r"([A-Z][A-Z0-9\s\.,&'\-]{5,})\s*\(\s*School\s*\)")
         if not name:
@@ -527,17 +550,16 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
         
         # Extract permit numbers in barcode-like format (just digits after J/E/SHS/K)
         # Matches: J026608, E00123, SHS0042, etc.
-        barcode_matches = re.findall(r"\b([JEKSHS]{1,3})[\s]*0*([0-9]{4,6})\b", normalized, re.IGNORECASE)
+        barcode_matches = re.findall(r"\b(SHS|S|E|J|K)[\s]*0*([0-9]{4,6})\b", normalized, re.IGNORECASE)
         for prefix, number in barcode_matches:
-            # Clean up the prefix - remove any "0" characters that might have been included
-            clean_prefix = prefix.replace("0", "").upper()[:3]
-            if clean_prefix and clean_prefix in ['SHS', 'E', 'J', 'K']:
+            clean_prefix = prefix.upper()
+            if clean_prefix in ['SHS', 'S', 'E', 'J', 'K']:
                 numstr = number.lstrip('0') or '0'
                 permit_candidates.append(f"{clean_prefix}-{numstr}")
         
         # Also try to match even without spaces between prefix and number
         # E.g., "J026608" as a continuous string
-        tight_barcode = re.findall(r"\b([JE])(\d{6})\b", normalized, re.IGNORECASE)
+        tight_barcode = re.findall(r"\b([JES])(\d{6})\b", normalized, re.IGNORECASE)
         for prefix, number in tight_barcode:
             permit_candidates.append(f"{prefix.upper()}-{number.lstrip('0') or number}")
         
@@ -643,11 +665,12 @@ async def ocr_permit(file: UploadFile = File(...), targetPage: Optional[int] = F
         permits = []
         if deduped_permits:
             for idx, permit_no in enumerate(deduped_permits):
+                inferred_levels = infer_permit_levels_from_code(permit_no)
                 permits.append(
                     {
                         "permitNumber": permit_no,
                         "schoolYear": school_years[idx] if idx < len(school_years) else (school_years[0] if school_years else ""),
-                        "permitLevels": default_levels,
+                        "permitLevels": inferred_levels if any(inferred_levels.values()) else default_levels,
                         "shsStrands": detected_strands,
                     }
                 )

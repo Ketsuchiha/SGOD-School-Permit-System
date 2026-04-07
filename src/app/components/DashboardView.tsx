@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { School } from '../data/mockData';
 import { useSchools } from '../contexts/SchoolContext';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useAuditLog } from '../contexts/AuditLogContext';
+import { useNavigate, useParams } from 'react-router-dom';
 import { MetricCard } from './MetricCard';
 import { SchoolCards } from './SchoolCards';
 import { MapWidget } from './MapWidget';
@@ -14,12 +15,13 @@ import { Building2, Baby, BookOpen, GraduationCap, School as SchoolIcon, Search,
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 
 export function DashboardView() {
+  const navigate = useNavigate();
+  const { schoolId } = useParams();
   const { schools, setSchools, activeSchools } = useSchools();
   const { addNotification } = useNotifications();
   const { logs, addLog } = useAuditLog();
   const apiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
   const [selectedSchool, setSelectedSchool] = useState<School | null>(null);
-  const [showEditor, setShowEditor] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [reportSchoolYear, setReportSchoolYear] = useState('');
   const [reportStatus, setReportStatus] = useState<'all' | 'operational' | 'renewal' | 'not-operational'>('all');
@@ -106,6 +108,22 @@ export function DashboardView() {
       .slice(0, 6);
   }, [logs]);
 
+  useEffect(() => {
+    if (!schoolId) {
+      return;
+    }
+
+    const schoolToEdit = activeSchools.find((school) => school.id === schoolId) || null;
+    if (schoolToEdit) {
+      setSelectedSchool(schoolToEdit);
+      return;
+    }
+
+    if (activeSchools.length > 0) {
+      navigate('/', { replace: true });
+    }
+  }, [schoolId, activeSchools, navigate]);
+
   const formatTimeAgo = (date: Date) => {
     const diffMs = Date.now() - new Date(date).getTime();
     const mins = Math.floor(diffMs / 60000);
@@ -134,7 +152,7 @@ export function DashboardView() {
       );
       addNotification('School Moved to Trash', `The school has been moved to the trash.`);
       addLog('delete', `School "${schools.find(s => s.id === id)?.name}" moved to trash.`);
-      setShowEditor(false);
+      navigate('/');
   };
 
   const handleAddSchool = (newSchool: School) => {
@@ -147,7 +165,7 @@ export function DashboardView() {
 
   const handleSelectSchool = (school: School) => {
     setSelectedSchool(school);
-    setShowEditor(true);
+    navigate(`/schools/${school.id}/edit`);
   };
 
   const handleExport = async () => {
@@ -381,10 +399,10 @@ export function DashboardView() {
         </div>
 
         {/* Split View Editor */}
-        {showEditor && selectedSchool && (
+        {schoolId && selectedSchool && (
           <SplitViewEditor
             school={selectedSchool}
-            onClose={() => setShowEditor(false)}
+            onClose={() => navigate('/')}
             onSave={handleUpdateSchool}
             onDelete={handleDeleteSchool}
           />
