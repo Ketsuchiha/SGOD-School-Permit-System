@@ -49,7 +49,28 @@ interface SplitViewEditorProps {
 }
 
 export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool = false }: SplitViewEditorProps) {
-  const apiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
+  const resolveApiBaseUrl = (rawValue?: string): string => {
+    const raw = (rawValue || '').trim();
+    if (!raw) {
+      return 'http://localhost:8000';
+    }
+
+    if (/^https?:\/\//i.test(raw)) {
+      return raw.replace(/\/+$/, '');
+    }
+
+    if (/^(localhost|[\w.-]+:\d+)(?:\/.*)?$/i.test(raw)) {
+      return `http://${raw}`.replace(/\/+$/, '');
+    }
+
+    if (typeof window !== 'undefined') {
+      return new URL(raw, window.location.origin).toString().replace(/\/+$/, '');
+    }
+
+    return raw.replace(/\/+$/, '');
+  };
+
+  const apiBaseUrl = resolveApiBaseUrl(import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000');
   const { addNotification } = useNotifications();
   const { addLog } = useAuditLog();
   const fallbackLogo = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2NgYGBgAAAABQABDQottAAAAABJRU5ErkJggg==';
@@ -165,16 +186,44 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     };
   };
 
+  const attachPermitUrlToIndex = (source: School, permitIndex: number, permitUrl: string): School => {
+    if (!permitUrl) {
+      return source;
+    }
+
+    const permits = getPermitList(source).map((permit) => ({
+      ...permit,
+      permitLevels: { ...permit.permitLevels },
+      shsStrands: [...(permit.shsStrands || [])],
+    }));
+
+    const safeIndex = Math.max(0, Math.min(permitIndex, permits.length - 1));
+    const targetPermit = permits[safeIndex] || createPermitFromSchool(source);
+    permits[safeIndex] = {
+      ...targetPermit,
+      permitUrl,
+    };
+
+    return syncPrimaryPermit(source, permits);
+  };
+
   const updatePermitAt = (index: number, updater: (permit: GovernmentPermit) => GovernmentPermit) => {
     setEditedSchool((prev: School) => {
-      const permits = getPermitList(prev).map((permit) => ({
+      const permits: GovernmentPermit[] = getPermitList(prev).map((permit) => ({
         ...permit,
         permitLevels: { ...permit.permitLevels },
         shsStrands: [...(permit.shsStrands || [])],
       }));
 
       const targetPermit = permits[index] || createPermitFromSchool(prev);
-      permits[index] = updater(targetPermit);
+      const updatedPermit = updater(targetPermit);
+      permits[index] = {
+        ...updatedPermit,
+        permitLevels: {
+          ...updatedPermit.permitLevels,
+        },
+        shsStrands: updatedPermit.shsStrands || [],
+      };
 
       return syncPrimaryPermit(prev, permits);
     });
@@ -410,16 +459,21 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
     setOcrEngine('none');
     setOcrDiagnostics(null);
     setOcrExtractedPermits([]);
+    let uploadSucceeded = false;
 
     let permitUrl = '';
     try {
-      // Pass the school year so the file is organized in the year's folder
-      const uploadResult = await requestPermitUpload(file, editedSchool.schoolYear);
+      const activePermit = getPermitList(editedSchool)[activePermitIndex] || createPermitFromSchool(editedSchool);
+      const uploadSchoolYear = (activePermit.schoolYear || editedSchool.schoolYear || '').trim();
+      // Pass the active permit's school year so files are organized correctly per permit entry.
+      const uploadResult = await requestPermitUpload(file, uploadSchoolYear);
       permitUrl = uploadResult.url;
-    } catch {
+      uploadSucceeded = true;
+    } catch (error) {
       permitUrl = await fileToDataUrl(file);
+      setUploadError(error instanceof Error ? `${error.message}. Using local preview only.` : 'Upload failed. Using local preview only.');
     }
-    setEditedSchool((prev) => ({ ...prev, permitUrl }));
+    setEditedSchool((prev: School) => attachPermitUrlToIndex(prev, activePermitIndex, permitUrl));
 
     try {
       const ocrResult = await requestOcr(file);
@@ -515,9 +569,16 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
         
         // Also check: if the old school's primary permit exists in history but doesn't have a URL,
         // assign the old school-level URL to it (for 2018 -> 2019 renewal case).
-        const oldPrimaryKey = makePermitKey(prev.permitNumber || '', prev.schoolYear || '');
-        if (oldPrimaryUrl && oldPrimaryKey && oldPrimaryKey !== makePermitKey(primaryPermit.permitNumber || '', primaryPermit.schoolYear || '')) {
-          const historicalOldPrimary = preservedExisting.find((p) => makePermitKey(p.permitNumber || '', p.schoolYear || '') === oldPrimaryKey);
+        const oldPrimaryKey = makePermitKey({
+          permitNumber: prev.permitNumber || '',
+          schoolYear: prev.schoolYear || '',
+          issueDate: prev.issueDate,
+          permitUrl: prev.permitUrl,
+          permitLevels: prev.permitLevels,
+          shsStrands: prev.shsStrands || [],
+        });
+        if (oldPrimaryUrl && oldPrimaryKey && oldPrimaryKey !== makePermitKey(primaryPermit)) {
+          const historicalOldPrimary = preservedExisting.find((p) => makePermitKey(p) === oldPrimaryKey);
           if (historicalOldPrimary && !historicalOldPrimary.permitUrl) {
             historicalOldPrimary.permitUrl = oldPrimaryUrl;
           }
@@ -525,7 +586,7 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
 
         const mergedHistory = [...incoming, ...preservedExisting];
 
-        return {
+        const nextSchool: School = {
           ...prev,
           permitNumber: primaryPermit.permitNumber || prev.permitNumber,
           schoolYear: primaryPermit.schoolYear || prev.schoolYear,
@@ -535,6 +596,8 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
           permitUrl,
           governmentPermits: mergedHistory,
         };
+
+        return attachPermitUrlToIndex(nextSchool, activePermitIndex, permitUrl);
       });
 
       setActivePermitIndex(0);
@@ -553,7 +616,12 @@ export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool
       setOcrEngine('none');
       setOcrDiagnostics(null);
       setOcrExtractedPermits([]);
-      setUploadError('OCR failed. File preview is kept; please fill missing fields manually.');
+      if (uploadSucceeded) {
+        setUploadError('Permit uploaded successfully. OCR failed; please fill missing fields manually.');
+      } else {
+        setUploadError('OCR failed and upload endpoint is unreachable. Local preview is kept; please check backend API connection.');
+      }
+      setEditedSchool((prev: School) => attachPermitUrlToIndex(prev, activePermitIndex, permitUrl));
     }
   };
 

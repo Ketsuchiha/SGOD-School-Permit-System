@@ -110,7 +110,28 @@ const getOcrEngineMeta = (engine: string) => {
 };
 
 export function CreateSchoolForm({ onClose, onSave }: CreateSchoolFormProps) {
-  const apiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
+  const resolveApiBaseUrl = (rawValue?: string): string => {
+    const raw = (rawValue || '').trim();
+    if (!raw) {
+      return 'http://localhost:8000';
+    }
+
+    if (/^https?:\/\//i.test(raw)) {
+      return raw.replace(/\/+$/, '');
+    }
+
+    if (/^(localhost|[\w.-]+:\d+)(?:\/.*)?$/i.test(raw)) {
+      return `http://${raw}`.replace(/\/+$/, '');
+    }
+
+    if (typeof window !== 'undefined') {
+      return new URL(raw, window.location.origin).toString().replace(/\/+$/, '');
+    }
+
+    return raw.replace(/\/+$/, '');
+  };
+
+  const apiBaseUrl = resolveApiBaseUrl(import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000');
   const { activeSchools } = useSchools();
   const { addNotification } = useNotifications();
   const fallbackLogo = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2NgYGBgAAAABQABDQottAAAAABJRU5ErkJggg==';
