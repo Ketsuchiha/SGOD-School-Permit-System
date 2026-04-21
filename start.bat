@@ -9,7 +9,7 @@ if not exist "backend\.venv\Scripts\python.exe" (
     python -m venv backend\.venv --without-pip
     echo [SETUP] Bootstrapping pip...
     backend\.venv\Scripts\python.exe -m ensurepip --upgrade
-    echo [SETUP] Installing backend dependencies (first run only)...
+    echo [SETUP] Installing backend dependencies ^(first run only^)...
     backend\.venv\Scripts\pip.exe install -r backend\requirements.txt
     echo [SETUP] Done.
 )
@@ -21,7 +21,7 @@ start "SGOD Backend" cmd /k "cd /d %~dp0backend && .venv\Scripts\uvicorn.exe app
 :: 2. Frontend – npm install once, then start Vite
 :: ─────────────────────────────────────────────────
 if not exist "node_modules" (
-    echo [SETUP] Installing frontend dependencies (first run only)...
+    echo [SETUP] Installing frontend dependencies ^(first run only^)...
     npm install
 )
 
