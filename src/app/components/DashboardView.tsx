@@ -13,6 +13,7 @@ import { ActionBar } from './ActionBar';
 import { Sidebar } from './Sidebar';
 import { Building2, Baby, BookOpen, GraduationCap, School as SchoolIcon, Search, Newspaper, FileText } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { resolveApiBaseUrl } from '../utils/apiBaseUrl';
 
 export function DashboardView() {
   const navigate = useNavigate();
@@ -20,7 +21,7 @@ export function DashboardView() {
   const { schools, setSchools, activeSchools } = useSchools();
   const { addNotification } = useNotifications();
   const { logs, addLog } = useAuditLog();
-  const apiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
+  const apiBaseUrl = resolveApiBaseUrl(import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000');
   const [selectedSchool, setSelectedSchool] = useState<School | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [reportSchoolYear, setReportSchoolYear] = useState('');

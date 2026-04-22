@@ -4,6 +4,7 @@ import { Trash2, RotateCcw, AlertCircle, ArrowLeft } from 'lucide-react';
 import { ConfirmationModal } from './ConfirmationModal';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { resolveApiBaseUrl } from '../utils/apiBaseUrl';
 
 
 export function TrashBin() {
@@ -13,7 +14,7 @@ export function TrashBin() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [schoolToDelete, setSchoolToDelete] = useState<string | null>(null);
 
-  const apiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
+  const apiBaseUrl = resolveApiBaseUrl(import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000');
 
   const handleRestore = (id: string) => {
     setSchools((prevSchools) =>

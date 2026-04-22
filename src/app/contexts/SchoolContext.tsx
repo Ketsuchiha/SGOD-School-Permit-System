@@ -1,8 +1,9 @@
 import { createContext, useState, useMemo, useContext, useEffect, useRef, useCallback } from 'react';
 import { School } from '../data/mockData';
+import { resolveApiBaseUrl } from '../utils/apiBaseUrl';
 
 const STORAGE_KEY = 'sgod:schools';
-const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
+const API_BASE_URL = resolveApiBaseUrl(import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000');
 
 const normalizeText = (value?: string) => (value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 

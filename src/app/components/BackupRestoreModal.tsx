@@ -10,6 +10,7 @@ import {
 } from './ui/dialog';
 import { Button } from './ui/button';
 import { Alert, AlertDescription } from './ui/alert';
+import { resolveApiBaseUrl } from '../utils/apiBaseUrl';
 
 interface BackupInfo {
   timestamp?: string;
@@ -26,7 +27,7 @@ interface RestoreResult {
 }
 
 export function BackupRestoreModal() {
-  const apiBaseUrl = import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000';
+  const apiBaseUrl = resolveApiBaseUrl(import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [backupInfo, setBackupInfo] = useState<BackupInfo | null>(null);

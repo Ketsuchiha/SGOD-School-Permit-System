@@ -9,6 +9,7 @@ import { ConfirmationModal } from './ConfirmationModal';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useAuditLog } from '../contexts/AuditLogContext';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { resolveApiBaseUrl } from '../utils/apiBaseUrl';
 
 const getOcrEngineMeta = (engine: string) => {
   const normalized = (engine || 'none').toLowerCase();
@@ -49,27 +50,6 @@ interface SplitViewEditorProps {
 }
 
 export function SplitViewEditor({ school, onClose, onSave, onDelete, isNewSchool = false }: SplitViewEditorProps) {
-  const resolveApiBaseUrl = (rawValue?: string): string => {
-    const raw = (rawValue || '').trim();
-    if (!raw) {
-      return 'http://localhost:8000';
-    }
-
-    if (/^https?:\/\//i.test(raw)) {
-      return raw.replace(/\/+$/, '');
-    }
-
-    if (/^(localhost|[\w.-]+:\d+)(?:\/.*)?$/i.test(raw)) {
-      return `http://${raw}`.replace(/\/+$/, '');
-    }
-
-    if (typeof window !== 'undefined') {
-      return new URL(raw, window.location.origin).toString().replace(/\/+$/, '');
-    }
-
-    return raw.replace(/\/+$/, '');
-  };
-
   const apiBaseUrl = resolveApiBaseUrl(import.meta.env?.VITE_API_BASE_URL ?? 'http://localhost:8000');
   const { addNotification } = useNotifications();
   const { addLog } = useAuditLog();
